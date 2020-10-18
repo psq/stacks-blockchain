@@ -18,6 +18,8 @@ use vm::analysis::errors::CheckErrors;
 use vm::analysis::{mem_type_check, AnalysisDatabase};
 use vm::analysis::{type_check, ContractAnalysis};
 use vm::ast::parse;
+use vm::database::MemoryBackingStore;
+use vm::types::{QualifiedContractIdentifier};
 
 mod costs;
 
@@ -304,4 +306,31 @@ fn test_write_attempt_in_readonly() {
     let err = mem_type_check(snippet).unwrap_err();
     assert!(format!("{}", err.diagnostic)
         .contains("expecting read-only statements, detected a writing operation"));
+}
+
+#[test]
+fn test_read_only_contract_call_via_trait() {
+    let trait_contract = "(define-trait fun-trait ( (fun1 () (response uint uint)) ))";
+    let impl_contract = "(impl-trait .trait.fun-trait) (define-read-only (fun1) (ok u1))";
+    let call_contract = "(use-trait fun-trait .trait.fun-trait) (define-read-only (fun2 (fun <fun-trait>)) (contract-call? fun fun1))";
+    let trait_contract_id = QualifiedContractIdentifier::local("trait").unwrap();
+    let impl_contract_id = QualifiedContractIdentifier::local("impl").unwrap();
+    let call_contract_id = QualifiedContractIdentifier::local("call").unwrap();
+    let mut c1 = parse(&trait_contract_id, trait_contract).unwrap();
+    let mut c2 = parse(&impl_contract_id, impl_contract).unwrap();
+    let mut c3 = parse(&call_contract_id, call_contract).unwrap();
+    let mut marf = MemoryBackingStore::new();
+    let mut db = marf.as_analysis_db();
+    let err = db
+        .execute(|db| {
+            type_check(&trait_contract_id, &mut c1, db, true).unwrap();
+            type_check(&impl_contract_id, &mut c2, db, true).unwrap();
+            type_check(&call_contract_id, &mut c3, db, true)
+        })
+        .unwrap/*_err*/();
+    println!("err =>>>> {:?}", err);
+    // match err.err {
+    //     CheckErrors::BadTraitImplementation(_, _) => {}
+    //     _ => panic!("{:?}", err),
+    // }
 }
