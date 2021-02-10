@@ -10,7 +10,7 @@ use stacks::chainstate::stacks::{
 use stacks::util::hash::{Hash160, Sha256Sum};
 use stacks::util::vrf::{VRFPrivateKey, VRFProof, VRFPublicKey, VRF};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Keychain {
     secret_keys: Vec<StacksPrivateKey>,
     threshold: u16,
@@ -136,6 +136,14 @@ impl Keychain {
         for i in 0..num_keys {
             tx_signer.sign_origin(&self.secret_keys[i]).unwrap();
         }
+    }
+
+    pub fn get_sk(&self, vrf_pk: &VRFPublicKey) -> Option<&VRFPrivateKey> {
+        self.vrf_map.get(vrf_pk)
+    }
+
+    pub fn add(&mut self, vrf_pk: &VRFPublicKey, vrf_sk: &VRFPrivateKey) {
+        self.vrf_map.insert(vrf_pk.clone(), vrf_sk.clone());
     }
 
     /// Given a VRF public key, generates a VRF Proof

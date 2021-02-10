@@ -22,6 +22,7 @@ use std::io;
 use std::io::prelude::*;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
+use std::sync::mpsc::{sync_channel, SyncSender, Receiver};
 
 use core::mempool::*;
 use net::atlas::{AtlasDB, Attachment, MAX_ATTACHMENT_INV_PAGES_PER_REQUEST};
@@ -55,8 +56,15 @@ use net::UrlString;
 use net::HTTP_REQUEST_ID_RESERVED;
 use net::MAX_NEIGHBORS_DATA_LEN;
 use net::{
-    AccountEntryResponse, AttachmentPage, CallReadOnlyResponse, ContractSrcResponse,
-    GetAttachmentResponse, GetAttachmentsInvResponse, MapEntryResponse,
+    AccountEntryResponse, AttachmentPage, BuildBlockTemplateResponse,
+    RegisterKeyRPCResponse,
+    RegisterKeyRPCResponse::RegisterKeyRPCResponseOk,
+    RegisterKeyRPCResponse::RegisterKeyRPCResponseErr,
+    BuildBlockTemplateRPCResponse,
+    BuildBlockTemplateRPCResponse::BuildBlockTemplateRPCResponseOk,
+    BuildBlockTemplateRPCResponse::BuildBlockTemplateRPCResponseErr,
+    CallReadOnlyResponse, ContractSrcResponse, GetAttachmentResponse, GetAttachmentsInvResponse,
+    MapEntryResponse,
 };
 use net::{RPCNeighbor, RPCNeighborsInfo};
 use net::{RPCPeerInfoData, RPCPoxInfoData};
@@ -77,6 +85,7 @@ use chainstate::stacks::db::{
 };
 use chainstate::stacks::Error as chain_error;
 use chainstate::stacks::*;
+use chainstate::stacks::db::blocks::StagingBlock;
 use monitoring;
 
 use rusqlite::{DatabaseName, NO_PARAMS};
@@ -86,6 +95,7 @@ use util::db::Error as db_error;
 use util::get_epoch_time_secs;
 use util::hash::Hash160;
 use util::hash::{hex_bytes, to_hex};
+use util::vrf::VRFPublicKey;
 
 use crate::{util::hash::Sha256Sum, version_string};
 
@@ -110,6 +120,31 @@ pub const STREAM_CHUNK_SIZE: u64 = 4096;
 pub struct RPCHandlerArgs<'a> {
     pub exit_at_block_height: Option<&'a u64>,
     pub genesis_chainstate_hash: Sha256Sum,
+}
+
+pub enum RPCDirective {
+    RegisterKey(
+        ConsensusHash,
+        // BurnchainHeaderHash,  TODO(psq): consensus harder to use/compute, otherwise would require blockheight, preferrable?
+        SyncSender<RegisterKeyRPCResponse>,
+    ),
+    // TODO(psq): no longer needed, remove
+    StoreMinerBlock(
+        ConsensusHash,
+        BurnchainHeaderHash,
+        StacksBlock,
+        StacksPrivateKey,
+    ),
+    PrepareBlock(
+        VRFPublicKey,
+        BlockHeaderHash,
+        ConsensusHash,
+        u64,
+        u16,
+        u64,
+        Option<Vec<Txid>>,
+        SyncSender<BuildBlockTemplateRPCResponse>,
+    ),
 }
 
 pub struct ConversationHttp {
@@ -139,6 +174,7 @@ pub struct ConversationHttp {
     pending_request: Option<ReplyHandleHttp>,
     pending_response: Option<HttpResponseType>,
     pending_error_response: Option<HttpResponseType>,
+    rpc_channel: Option<SyncSender<RPCDirective>>,
 }
 
 impl fmt::Display for ConversationHttp {
@@ -392,6 +428,7 @@ impl ConversationHttp {
         peer_host: PeerHost,
         conn_opts: &ConnectionOptions,
         conn_id: usize,
+        rpc_channel: Option<SyncSender<RPCDirective>>,
     ) -> ConversationHttp {
         let mut stacks_http = StacksHttp::new();
         stacks_http.maximum_call_argument_size = conn_opts.maximum_call_argument_size;
@@ -414,6 +451,7 @@ impl ConversationHttp {
             last_request_timestamp: 0,
             last_response_timestamp: 0,
             connection_time: get_epoch_time_secs(),
+            rpc_channel,
         }
     }
 
@@ -1579,6 +1617,104 @@ impl ConversationHttp {
         response.send(http, fd).and_then(|_| Ok(accepted))
     }
 
+    /// Handle a POST to register a miner key
+    fn handle_post_register_key<W: Write>(
+        http: &mut StacksHttp,
+        fd: &mut W,
+        req: &HttpRequestType,
+
+        parent_consensus_hash: &ConsensusHash,
+        rpc_channel: Option<SyncSender<RPCDirective>>,
+    ) -> Result<(), net_error> {
+        let response_metadata = HttpResponseMetadata::from(req);
+
+        // TODO(psq): generate block
+        println!("handle_post_register_key for {:?}", parent_consensus_hash);
+
+        let (tx, rx): (SyncSender<RegisterKeyRPCResponse>, Receiver<RegisterKeyRPCResponse>) = sync_channel(1);  // can't be more than 1 message back
+
+        if rpc_channel.unwrap().send(RPCDirective::RegisterKey(
+            *parent_consensus_hash,
+            tx,
+        )).is_err() {
+            return Err(net_error::MinerNotResponding);
+        }
+        let data = match rx.recv() {
+            Ok(response) => {
+                match response {
+                    RegisterKeyRPCResponseOk { response } => response,
+                    RegisterKeyRPCResponseErr { err } => {
+                        return Err(net_error::ChainstateError(err.to_string()));
+                    }
+                }
+            },
+            _ => {
+                return Err(net_error::MinerNotResponding);
+            }
+        };
+
+        let response = HttpResponseType::PostRegisterKey(response_metadata, data);
+        response.send(http, fd).map(|_| ())
+    }
+
+    /// Handle a POST to pre-build a block for a miner
+    fn handle_post_build_block<W: Write>(
+        http: &mut StacksHttp,
+        fd: &mut W,
+        req: &HttpRequestType,
+
+        vrf_pk: &VRFPublicKey,
+        anchored_block_hash: &BlockHeaderHash,
+        parent_consensus_hash: &ConsensusHash,
+        parent_block_burn_height: &u64,
+        parent_winning_vtxindex: &u16,
+        target_burn_block: &u64,
+        txids: &Option<Vec<Txid>>,
+        rpc_channel: Option<SyncSender<RPCDirective>>,
+    ) -> Result<(), net_error> {
+        let response_metadata = HttpResponseMetadata::from(req);
+
+        // TODO(psq): generate block
+        println!("handle_post_build_block {:?} {:?}/{:?} ({:?}, {:?}) {:?}", vrf_pk, anchored_block_hash, parent_consensus_hash, parent_block_burn_height, parent_winning_vtxindex, target_burn_block);
+
+        // TODO(psq): why do I have to go through this nonsense to avoid "borrowing"?  dumb compiler, or dumb dev?
+        let txids: Option<Vec<Txid>> = if txids.is_some() {
+            Some((txids.as_ref().unwrap()).to_vec())
+        } else {
+            None
+        };
+        let (tx, rx): (SyncSender<BuildBlockTemplateRPCResponse>, Receiver<BuildBlockTemplateRPCResponse>) = sync_channel(1);  // can't be more than 1 message back
+
+        if rpc_channel.unwrap().send(RPCDirective::PrepareBlock(
+            *vrf_pk,
+            *anchored_block_hash,
+            *parent_consensus_hash,
+            *parent_block_burn_height,
+            *parent_winning_vtxindex,
+            *target_burn_block,
+            txids,
+            tx,
+        )).is_err() {
+            return Err(net_error::MinerNotResponding);
+        }
+        let data = match rx.recv() {
+            Ok(response) => {
+                match response {
+                    BuildBlockTemplateRPCResponseOk { response } => response,
+                    BuildBlockTemplateRPCResponseErr { err } => {
+                        return Err(net_error::ChainstateError(err.to_string()));
+                    }
+                }
+            },
+            _ => {
+                return Err(net_error::MinerNotResponding);
+            }
+        };
+
+        let response = HttpResponseType::PostBuildBlockTemplate(response_metadata, data);
+        response.send(http, fd).map(|_| ())
+    }
+
     /// Handle an external HTTP request.
     /// Some requests, such as those for blocks, will create new reply streams.  This method adds
     /// those new streams into the `reply_streams` set.
@@ -1947,6 +2083,49 @@ impl ConversationHttp {
                             index_anchor_block: tip,
                             microblocks: vec![(*mblock).clone()],
                         }));
+                    }
+                }
+                None
+            }
+            HttpRequestType::PostRegisterKey(ref _md, ref parent_consensus_hash) => {
+                debug!("==> RegisterKey {:#?}", parent_consensus_hash);
+
+                ConversationHttp::handle_post_register_key(
+                    &mut self.connection.protocol,
+                    &mut reply,
+                    &req,
+                    parent_consensus_hash,
+                    self.rpc_channel.clone(),
+                )?;
+                None
+            }
+            HttpRequestType::PostBuildBlockTemplate(ref _md, ref vrf_pk, ref anchored_block_hash, ref parent_consensus_hash, ref parent_block_burn_height, ref parent_winning_vtxindex, ref target_burn_block, ref txids) => {
+                debug!("==> PostBuildBlockTemplate {:#?} - {:#?}:{:#?} - {:#?},{:#?} - {:#?} [{:#?}]", vrf_pk, anchored_block_hash, parent_consensus_hash, parent_block_burn_height, parent_winning_vtxindex, target_burn_block, txids);
+
+                match chainstate.get_stacks_chain_tip(sortdb)? {
+                    Some(_tip) => {
+                        ConversationHttp::handle_post_build_block(
+                            &mut self.connection.protocol,
+                            &mut reply,
+                            &req,
+                            vrf_pk,
+                            anchored_block_hash,
+                            parent_consensus_hash,
+                            parent_block_burn_height,
+                            parent_winning_vtxindex,
+                            target_burn_block,
+                            txids,
+                            self.rpc_channel.clone(),
+                        )?;
+                    }
+                    None => {
+                        let response_metadata = HttpResponseMetadata::from(&req);
+                        warn!("Failed to load Stacks chain tip");
+                        let response = HttpResponseType::ServerError(
+                            response_metadata,
+                            format!("Failed to load Stacks chain tip"),
+                        );
+                        response.send(&mut self.connection.protocol, &mut reply)?;
                     }
                 }
                 None

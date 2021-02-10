@@ -16,7 +16,7 @@
 
 use chainstate::burn::BlockHeaderHash;
 use chainstate::stacks::db::{
-    blocks::MemPoolRejection, ClarityTx, StacksChainState, MINER_REWARD_MATURITY,
+    blocks::MemPoolRejection, blocks::StagingBlock, ClarityTx, StacksChainState, MINER_REWARD_MATURITY,
 };
 use chainstate::stacks::events::StacksTransactionReceipt;
 use chainstate::stacks::index::TrieHash;
@@ -45,6 +45,7 @@ use chainstate::burn::*;
 
 use chainstate::stacks::db::unconfirmed::UnconfirmedState;
 
+use burnchains::Burnchain;
 use burnchains::BurnchainHeaderHash;
 use burnchains::PrivateKey;
 use burnchains::PublicKey;
@@ -1238,6 +1239,808 @@ impl StacksBlockBuilder {
         Ok(builder)
     }
 
+    // fn inner_generate_coinbase_tx(
+    //     keychain: &Keychain,
+    //     nonce: u64,
+    //     is_mainnet: bool,
+    //     chain_id: u32,
+    // ) -> StacksTransaction {
+    //     let mut tx_auth = keychain.get_transaction_auth().unwrap();
+    //     tx_auth.set_origin_nonce(nonce);
+
+    //     let version = if is_mainnet {
+    //         TransactionVersion::Mainnet
+    //     } else {
+    //         TransactionVersion::Testnet
+    //     };
+    //     let mut tx = StacksTransaction::new(
+    //         version,
+    //         tx_auth,
+    //         TransactionPayload::Coinbase(CoinbasePayload([0u8; 32])),
+    //     );
+    //     tx.chain_id = chain_id;
+    //     tx.anchor_mode = TransactionAnchorMode::OnChainOnly;
+    //     let mut tx_signer = StacksTransactionSigner::new(&tx);
+    //     keychain.sign_as_origin(&mut tx_signer);
+
+    //     tx_signer.get_tx().unwrap()
+    // }
+
+    // fn inner_generate_poison_microblock_tx(
+    //     keychain: &Keychain,
+    //     nonce: u64,
+    //     poison_payload: TransactionPayload,
+    //     is_mainnet: bool,
+    //     chain_id: u32,
+    // ) -> StacksTransaction {
+    //     let mut tx_auth = keychain.get_transaction_auth().unwrap();
+    //     tx_auth.set_origin_nonce(nonce);
+
+    //     let version = if is_mainnet {
+    //         TransactionVersion::Mainnet
+    //     } else {
+    //         TransactionVersion::Testnet
+    //     };
+    //     let mut tx = StacksTransaction::new(version, tx_auth, poison_payload);
+    //     tx.chain_id = chain_id;
+    //     tx.anchor_mode = TransactionAnchorMode::OnChainOnly;
+    //     let mut tx_signer = StacksTransactionSigner::new(&tx);
+    //     keychain.sign_as_origin(&mut tx_signer);
+
+    //     tx_signer.get_tx().unwrap()
+    // }
+
+    // pub fn build_anchored_block_from_txids(
+    //     tip: &StagingBlock,
+    //     burn_db: &SortitionDB,
+    //     chainstate: &mut StacksChainState,
+    //     mempool: &mut MemPoolDB,
+    //     burnchain: &Burnchain,
+        
+    //     vrf_sk: &VRFPrivateKey,
+    //     vrf_pk: &VRFPublicKey,
+    //     anchored_block_hash: &BlockHeaderHash,
+    //     parent_consensus_hash: &ConsensusHash,
+    //     parent_block_burn_height: &u64,
+    //     parent_winning_vtxindex: &u16,
+    //     target_burn_block: &u64,
+    //     txids: &Option<Vec<Txid>>,
+
+    //     // TODO(psq): what to do about VRFPrivateKey/VRFPublicKey (pass? but need to calculate proof for registration from outside, make it a config and add api?)
+    //     // derive sk from seed, by using n rotations, and pass n?
+
+    //     rpc_channel: Option<SyncSender<RPCDirective>>,
+    // ) -> Result<(BlockHeaderHash, VRFSeed, Vec<StacksAddress>), Error> {
+    //     let mainnet = chainstate.config().mainnet;
+    //     let chain_id = chainstate.config().chain_id;
+
+    //     // this needs to unwrap at this point
+    //     let keychain = keychain_opt.unwrap();
+
+    //     // // get the correct tip for anchored_block_hash
+    //     let tip_opt: Option<BlockSnapshot> = SortitionDB::get_block_snapshot_consensus(
+    //         burn_db.conn(),
+    //         parent_consensus_hash,
+    //     ).unwrap();
+
+    //     // TODO(psq): is this really necessary, just as a sanity check?
+    //     if let Some(parent_snapshot) = SortitionDB::get_block_snapshot_consensus(burn_db.conn(), parent_consensus_hash).unwrap() {
+    //         let (tip_consensus_hash, tip_block_hash, tip_height) = (
+    //             parent_snapshot.consensus_hash.clone(),
+    //             parent_snapshot.winning_stacks_block_hash.clone(),
+    //             parent_snapshot.block_height,
+    //         );
+
+    //         if tip_block_hash != *anchored_block_hash {
+    //             error!("Requested parent block hash mismatch {:?} != {:?}", tip_block_hash, anchored_block_hash);
+    //             return Err(Error::NoSuchBlockError);
+    //         }
+
+    //         debug!(
+    //             "Build anchored block off of {}/{} height {}",
+    //             &tip_consensus_hash, &tip_block_hash, tip_height
+    //         );
+
+
+    //         let stacks_tip_header_opt = StacksChainState::get_anchored_block_header_info(
+    //             chainstate.db(),
+    //             &parent_consensus_hash,
+    //             &anchored_block_hash,
+    //         )?;
+
+    //         if stacks_tip_header_opt.is_none() {
+    //             error!("could not find header for known chain tip {:?} != {:?}", parent_consensus_hash, anchored_block_hash);
+    //             return Err(Error::NoSuchBlockError);
+    //         }
+
+    //         let mut stacks_tip_header = stacks_tip_header_opt.unwrap();
+
+    //         let parent_sortition_id = &parent_snapshot.sortition_id;
+    //         // let parent_winning_vtxindex =
+    //         //     match SortitionDB::get_block_winning_vtxindex(burn_db.conn(), parent_sortition_id)
+    //         //         .expect("SortitionDB failure.")
+    //         //     {
+    //         //         Some(x) => x,
+    //         //         None => {
+    //         //             warn!(
+    //         //                 "Failed to find winning vtx index for the parent sortition {}",
+    //         //                 parent_sortition_id
+    //         //             );
+    //         //             return Err(Error::NoSuchBlockError);
+    //         //         }
+    //         //     };
+
+    //         let parent_block_snapshot =
+    //             match SortitionDB::get_block_snapshot(burn_db.conn(), parent_sortition_id)
+    //                 .expect("SortitionDB failure.")
+    //             {
+    //                 Some(x) => x,
+    //                 None => {
+    //                     warn!(
+    //                         "Failed to find block snapshot for the parent sortition {}",
+    //                         parent_sortition_id
+    //                     );
+    //                     return Err(Error::NoSuchBlockError);
+    //                 }
+    //             };
+
+    //         // // don't mine off of an old burnchain block
+    //         // let burn_chain_tip = SortitionDB::get_canonical_burn_chain_tip(burn_db.conn())
+    //         //     .expect("FATAL: failed to query sortition DB for canonical burn chain tip");
+
+    //         // if burn_chain_tip.consensus_hash != burn_block.consensus_hash {
+    //         //     debug!("New canonical burn chain tip detected: {} ({}) > {} ({}). Will not try to mine.", burn_chain_tip.consensus_hash, burn_chain_tip.block_height, &burn_block.consensus_hash, &burn_block.block_height);
+    //         //     return None;
+    //         // }
+
+    //         // debug!("Mining tenure's last consensus hash: {} (height {} hash {}), stacks tip consensus hash: {} (height {} hash {})",
+    //         //            &burn_block.consensus_hash, burn_block.block_height, &burn_block.burn_header_hash,
+    //         //            &stacks_tip.consensus_hash, parent_snapshot.block_height, &parent_snapshot.burn_header_hash);
+
+
+    //         let coinbase_nonce = {
+    //             let principal = keychain.origin_address(mainnet).unwrap().into();
+    //             let account = chainstate
+    //                 .with_read_only_clarity_tx(
+    //                     &burn_db.index_conn(),
+    //                     &StacksBlockHeader::make_index_block_hash(
+    //                         &parent_consensus_hash,
+    //                         &anchored_block_hash,
+    //                     ),
+    //                     |conn| StacksChainState::get_account(conn, &principal),
+    //                 )
+    //                 .expect(&format!(
+    //                     "BUG: stacks tip block {}/{} no longer exists after we queried it",
+    //                     &parent_consensus_hash, &anchored_block_hash
+    //                 ));
+    //             account.nonce
+    //         };
+
+    //         // TODO(psq): needed?
+    //         // let parent_staging_block = match StacksChainState::load_staging_block_info(
+    //         //     &chainstate.db(),
+    //         //     &StacksBlockHeader::make_index_block_hash(
+    //         //         &parent_consensus_hash,
+    //         //         &anchored_block_hash,
+    //         //     ),
+    //         // ) {
+    //         //     Ok(Some(x)) => x,
+    //         //     Ok(None) => {
+    //         //         debug!(
+    //         //             "{:?}: No block stored for {}/{}",
+    //         //             &self.local_peer,
+    //         //             &parent_consensus_hash,
+    //         //             &anchored_block_hash,
+    //         //         );
+    //         //         return Err(Error::NoSuchBlockError);
+    //         //     }
+    //         //     Err(e) => {
+    //         //         debug!(
+    //         //             "{:?}: Failed to query header info of {}/{}: {:?}",
+    //         //             &self.local_peer,
+    //         //             &parent_consensus_hash,
+    //         //             &anchored_block_hash,
+    //         //             &e
+    //         //         );
+    //         //         return Err(Error::NoSuchBlockError);
+    //         //     }
+    //         // };
+
+    //         // now we have
+    //         // stacks_tip_header,
+    //         // parent_consensus_hash,
+    //         // parent_block_snapshot.block_height,
+    //         // parent_block_snapshot.total_burn,
+    //         // parent_winning_vtxindex,
+    //         // coinbase_nonce,
+
+    //         // need
+    //         // vrf_public_key/vrf_private_key
+
+
+    //         // TODO(psq): get seed from api (seed via naked http??? hick!!!)
+    //         let mut vrf_keychain = Keychain::default(hex_bytes("").unwrap().clone());
+    //         let vrf_pk: VRFPublicKey = VRFPublicKey::from_hex("62a466c064502a8c90a6f02b80164c89ed20fa732a0c0d5512d385d2b62aa6c3").unwrap();
+    //         let vrf_sk: VRFPrivateKey = VRFPrivateKey::from_hex(&"f1539befa7e0ed8fdc90f56d086ffc69e6bad75f3b9fa96006185ffd4b48e860".to_string()).unwrap();
+    //         vrf_keychain.add(&vrf_pk, &vrf_sk);
+
+    //         // Generates a proof out of the sortition hash provided in the params.
+    //         let vrf_proof = match vrf_keychain.generate_proof(
+    //             &vrf_pk,
+    //             parent_snapshot.sortition_hash.as_bytes(),
+    //         ) {
+    //             Some(vrfp) => vrfp,
+    //             None => {
+    //                 return Err(Error::InvalidProof);
+    //             }
+    //         };
+
+    //         debug!(
+    //             "Generated VRF Proof: {:#?} over {:#?} with key {:#?}",
+    //             vrf_proof,
+    //             &parent_snapshot.sortition_hash,
+    //             &vrf_pk,
+    //         );
+
+    //         // Generates a new secret key for signing the trail of microblocks
+    //         // of the upcoming tenure.
+    //         let microblock_secret_key = keychain.rotate_microblock_keypair(parent_snapshot.block_height);
+    //         let mblock_pubkey_hash = Hash160::from_node_public_key(&StacksPublicKey::from_private(&microblock_secret_key));
+
+    //         let coinbase_tx = StacksBlockBuilder::inner_generate_coinbase_tx(
+    //             &keychain,
+    //             coinbase_nonce,
+    //             mainnet,
+    //             chain_id,
+    //         );
+
+    //         // find the longest microblock tail we can build off of
+    //         let microblock_info_opt =
+    //             match StacksChainState::load_descendant_staging_microblock_stream_with_poison(
+    //                 chainstate.db(),
+    //                 &StacksBlockHeader::make_index_block_hash(
+    //                     &parent_consensus_hash,
+    //                     &anchored_block_hash,
+    //                 ),
+    //                 0,
+    //                 u16::MAX,
+    //             ) {
+    //                 Ok(x) => {
+    //                     let num_mblocks = x.as_ref().map(|(mblocks, ..)| mblocks.len()).unwrap_or(0);
+    //                     debug!(
+    //                         "Loaded {} microblocks descending from {}/{}",
+    //                         num_mblocks,
+    //                         &parent_consensus_hash,
+    //                         &anchored_block_hash
+    //                     );
+    //                     x
+    //                 }
+    //                 Err(e) => {
+    //                     warn!(
+    //                         "Failed to load descendant microblock stream from {}/{}: {:?}",
+    //                         &parent_consensus_hash,
+    //                         &anchored_block_hash,
+    //                         &e
+    //                     );
+    //                     None
+    //                 }
+    //             };
+
+    //         if let Some((microblocks, poison_opt)) = microblock_info_opt {
+    //             if let Some(ref tail) = microblocks.last() {
+    //                 debug!(
+    //                     "Confirm microblock stream tailed at {} (seq {})",
+    //                     &tail.block_hash(),
+    //                     tail.header.sequence
+    //                 );
+    //             }
+
+    //             stacks_tip_header.microblock_tail =
+    //                 microblocks.last().clone().map(|blk| blk.header.clone());
+
+    //             if let Some(poison_payload) = poison_opt {
+    //                 let poison_microblock_tx = StacksBlockBuilder::inner_generate_poison_microblock_tx(
+    //                     &keychain,
+    //                     coinbase_nonce + 1,
+    //                     poison_payload,
+    //                     mainnet,
+    //                     chain_id,
+    //                 );
+
+    //                 // submit the poison payload, privately, so we'll mine it when building the
+    //                 // anchored block.
+    //                 if let Err(e) = mempool.submit(
+    //                     chainstate,
+    //                     &parent_consensus_hash,
+    //                     &stacks_tip_header.anchored_header.block_hash(),
+    //                     &poison_microblock_tx,
+    //                 ) {
+    //                     warn!(
+    //                         "Detected but failed to mine poison-microblock transaction: {:?}",
+    //                         &e
+    //                     );
+    //                 }
+    //             }
+    //         }
+
+    //         let (anchored_block, _, _) = match StacksBlockBuilder::build_anchored_block(
+    //             chainstate,
+    //             &burn_db.index_conn(),
+    //             mempool,
+    //             &stacks_tip_header,
+    //             parent_block_snapshot.total_burn,
+    //             vrf_proof.clone(),
+    //             mblock_pubkey_hash,
+    //             &coinbase_tx,
+    //             HELIUM_BLOCK_LIMIT.clone(),
+    //         ) {
+    //             Ok(block) => block,
+    //             Err(e) => {
+    //                 error!("Failure mining anchored block: {}", e);
+    //                 return Err(Error::FailedToMineBlock);
+    //             }
+    //         };
+    //         let block_height = anchored_block.header.total_work.work;
+    //         info!(
+    //             "Succeeded assembling {} block #{}: {}, with {} txs",
+    //             if parent_block_snapshot.total_burn == 0 {
+    //                 "Genesis"
+    //             } else {
+    //                 "Stacks"
+    //             },
+    //             block_height,
+    //             anchored_block.block_hash(),
+    //             anchored_block.txs.len(),
+    //         );
+
+    //         // let's figure out the recipient set!
+    //         // TODO(psq): this wrongly assumes the next block 
+    //         // however, we should be seeing a lot more of "does not match expected" error
+    //         // create a separate api for helping adjust commits?
+    //         let recipients = match get_next_recipientsPSQ(
+    //             &parent_snapshot,
+    //             chainstate,
+    //             burn_db,
+    //             burnchain,
+    //             &OnChainRewardSetProvider(),
+    //         ) {
+    //             Ok(x) => x,
+    //             Err(e) => {
+    //                 error!("Failure fetching recipient set: {:?}", e);
+    //                 return Err(Error::FailedToComputeRecipients);
+    //             }
+    //         };
+
+    //         // let sunset_burn = burnchain.expected_sunset_burn(parent_snapshot.block_height + 1, burn_fee_cap);
+    //         // let rest_commit = burn_fee_cap - sunset_burn;
+
+    //         let commit_outs = if *target_burn_block < burnchain.pox_constants.sunset_end
+    //             && !burnchain.is_in_prepare_phase(*target_burn_block)
+    //         {
+    //             RewardSetInfo::into_commit_outs(recipients, mainnet)
+    //         } else {
+    //             vec![StacksAddress::burn_address(mainnet)]
+    //         };
+
+    //         // // let's commit
+    //         // let op = inner_generate_block_commit_op(
+    //         //     keychain.get_burnchain_signer(),
+    //         //     anchored_block.block_hash(),
+    //         //     rest_commit,
+    //         //     &registered_key,
+    //         //     parent_block_burn_height
+    //         //         .try_into()
+    //         //         .expect("Could not convert parent block height into u32"),
+    //         //     parent_winning_vtxindex,
+    //         //     VRFSeed::from_proof(&vrf_proof),
+    //         //     commit_outs,
+    //         //     sunset_burn,
+    //         //     burn_block.block_height,
+    //         // );
+    //         // let mut op_signer = keychain.generate_op_signer();
+    //         debug!(
+    //             "Submit block-commit for block {} off of {}/{} with microblock parent {}",
+    //             &anchored_block.block_hash(),
+    //             &parent_consensus_hash,
+    //             &anchored_block.header.parent_block,
+    //             &anchored_block.header.parent_microblock
+    //         );
+
+    //         // let res = bitcoin_controller.submit_operation(op, &mut op_signer, attempt);
+    //         // if !res {
+    //         //     warn!("Failed to submit Bitcoin transaction");
+    //         //     return None;
+    //         // }
+
+    //         // Some((
+    //         //     AssembledAnchorBlock {
+    //         //         parent_consensus_hash: parent_consensus_hash,
+    //         //         my_burn_hash: burn_block.burn_header_hash,
+    //         //         anchored_block,
+    //         //         attempt,
+    //         //     },
+    //         //     microblock_secret_key,
+    //         // ))
+
+
+
+
+
+
+
+
+
+
+    //         // let (mut header_reader_chainstate, _) = chainstate.reopen()?;
+    //         // let (mut chainstate, _) = chainstate.reopen_limited(chainstate.block_limit.clone())?;
+
+    //         // let parent_stacks_header = StacksChainState::get_anchored_block_header_info(
+    //         //     header_reader_chainstate.db(),
+    //         //     &tip_consensus_hash,
+    //         //     &tip_block_hash,
+    //         // )
+    //         // .unwrap()
+    //         // .unwrap();
+
+    //         // // the stacks block I'm mining off of's burn header hash and vtxindex:
+    //         // let burn_dbconn = sortdb.index_conn();
+    //         // let parent_snapshot = SortitionDB::get_block_snapshot_consensus(
+    //         //     &burn_dbconn,
+    //         //     &tip_consensus_hash,
+    //         // )
+    //         // .expect("Failed to look up block's parent snapshot")
+    //         // .expect("Failed to look up block's parent snapshot");
+
+    //         // println!("====> total_burn {:?}", parent_snapshot.total_burn);
+
+    //         // let mut builder = StacksBlockBuilder::make_block_builder(
+    //         //     chainstate.mainnet,
+    //         //     &parent_stacks_header,
+    //         //     proof.clone(),
+    //         //     parent_snapshot.total_burn,
+    //         //     *microblock_public_hash,
+    //         // )?;
+
+    //         // println!("epoch_begin");
+    //         // let mut epoch_tx = builder.epoch_begin(&mut chainstate, &burn_dbconn)?;
+    //         // println!("try_mine coinbase {:#?}", coinbase_tx);
+    //         // builder.try_mine_tx(&mut epoch_tx, coinbase_tx)?;
+
+    //         // println!("get parent_sortition_id, parent_winning_vtxindex");
+    //         // let parent_sortition_id = &parent_snapshot.sortition_id;
+    //         // let parent_winning_vtxindex =
+    //         //     match SortitionDB::get_block_winning_vtxindex(&burn_dbconn, parent_sortition_id)
+    //         //         .expect("SortitionDB failure.")
+    //         //     {
+    //         //         Some(x) => x,
+    //         //         None => {
+    //         //             warn!(
+    //         //                 "Failed to find winning vtx index for the parent sortition {}",
+    //         //                 parent_sortition_id
+    //         //             );
+    //         //             return Err(Error::NoSuchBlockError);
+    //         //         }
+    //         //     };
+
+    //         // let mut ids: Vec<MemPoolTxInfo> = Vec::new();
+
+    //         // println!("get txs");
+    //         // let result = if txids.is_empty() {
+    //         //     // TODO(psq): find all transactions from mempool instead
+    //         //     // allowing for a lighter miner that does not have to keep track of which transaction
+    //         //     // has already been included in which block, and keep track of what is in the mempool
+    //         //     mempool.iterate_candidates(
+    //         //         &tip_consensus_hash,
+    //         //         &tip_block_hash,
+    //         //         tip_height,
+    //         //         &mut header_reader_chainstate,
+    //         //         |available_txs| {
+    //         //             StacksBlockBuilder::consider_transactions(available_txs, &mut builder, &mut epoch_tx)
+    //         //         },
+    //         //     )
+    //         // } else {
+    //         //     // TODO(psq): generate an error if tx can't be found?
+    //         //     // TODO(psq): or just report those that could not be included
+    //         //     for txid in txids.iter() {
+    //         //         if let Ok(Some(id)) = MemPoolDB::get_tx(mempool.conn(), &txid) {
+    //         //             ids.push(id);
+    //         //         } else {
+    //         //             // TODO(psq): build list of txids that can not be included
+    //         //         }
+    //         //     }            
+    //         //     StacksBlockBuilder::consider_transactions(ids, &mut builder, &mut epoch_tx)
+    //         // };
+
+    //         // match result {
+    //         //     Ok(_) => {}
+    //         //     Err(e) => {
+    //         //         warn!("Failure building block: {}", e);
+    //         //         epoch_tx.rollback_block();
+    //         //         return Err(e);
+    //         //     }
+    //         // }
+
+    //         // println!("build block");
+    //         // let block = builder.mine_anchored_block(&mut epoch_tx);
+    //         // let size = builder.bytes_so_far;
+    //         // let consumed = builder.epoch_finish(epoch_tx);
+
+    //         // let parent_block_burn_height: u32 = parent_stacks_header.burn_header_height;
+
+    //         // println!("get_next_recipients");
+    //         // let recipients/*: Option<RewardSetInfo>*/ = match get_next_recipientsPSQ(
+    //         //     &parent_snapshot,
+    //         //     &mut chainstate,
+    //         //     &sortdb,  // TODO(psq): need non mutable flavor for get_next_recipients
+    //         //     &burnchain,
+    //         //     &OnChainRewardSetProvider(),
+    //         // ) {
+    //         //     Ok(x) => x,
+    //         //     Err(e) => {
+    //         //         error!("Failure fetching recipient set: {:?}", e);
+    //         //         return Err(Error::PoxRecipientsNotAvailable);
+    //         //     }
+    //         // };
+
+    //         // println!("StoreMinerBlock");
+    //         // // TODO(psq): this is where the relayer should be an option?
+    //         // // store the block in case it wins sortition
+    //         // if rpc_channel.is_some() {
+    //         //     // TODO(psq): parent_snapshot.burn_header_hash is not the right burn, needs to be highest known instead if we missed a block
+    //         //     let rpc_status = rpc_channel.unwrap().send(RPCDirective::StoreMinerBlock(tip_consensus_hash, burnchain_tip.burn_header_hash, block.clone(), *microblock_secret_key));
+    //         //     println!("rpc_status {:?}", rpc_status);
+    //         //     if !rpc_status.is_ok() {
+    //         //         return Err(Error::RelayerError);
+    //         //     }            
+    //         // }
+
+    //         // println!("returning");
+    //         // Ok((block, consumed, size, tip_height as u32, parent_block_burn_height, parent_winning_vtxindex, recipients))
+
+    //         println!("StoreMinerBlock");
+    //         // TODO(psq): this is where the relayer should be an option?
+    //         // store the block in case it wins sortition
+    //         if rpc_channel.is_some() {
+    //             // TODO(psq): parent_snapshot.burn_header_hash is not the right burn, needs to be highest known instead if we missed a block
+    //             let rpc_status = rpc_channel.unwrap().send(RPCDirective::StoreMinerBlock(tip_consensus_hash, parent_snapshot.burn_header_hash, anchored_block.clone(), microblock_secret_key));
+    //             println!("rpc_status {:?}", rpc_status);
+    //             if !rpc_status.is_ok() {
+    //                 return Err(Error::FailedToStoreBlock);
+    //             }            
+    //         }
+
+    //         // parent_block_height,
+    //         // parent_tx_offset,
+    //         // key_block_height,
+    //         // key_tx_offset,
+
+    //         Ok((
+    //             anchored_block.block_hash(),
+    //             VRFSeed::from_proof(&vrf_proof), // VRFSeed::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+    //             commit_outs,
+    //         ))
+    //     } else {
+    //         // no block with such a consensus
+    //         error!("No block with this consensus {:?}", parent_consensus_hash);
+    //         return Err(Error::NoSuchBlockError);
+    //     }
+
+
+
+    //     // let burnchain_tip: BlockSnapshot = SortitionDB::get_canonical_burn_chain_tip(sortdb.conn())?;
+    //     // debug!("build_anchored_block_from_txids burnchain tip #{}: {:?}", burnchain_tip.block_height, burnchain_tip.burn_header_hash);
+
+    //     // // create coinbase
+
+    //     // let (tip_consensus_hash, tip_block_hash, tip_height) = (
+    //     //     tip.consensus_hash.clone(),
+    //     //     tip.anchored_block_hash.clone(),
+    //     //     tip.height,
+    //     // );
+
+    //     // debug!(
+    //     //     "Build anchored block off of {}/{} height {}",
+    //     //     &tip_consensus_hash, &tip_block_hash, tip_height
+    //     // );
+
+    //     // let (mut header_reader_chainstate, _) = chainstate.reopen()?;
+    //     // let (mut chainstate, _) = chainstate.reopen_limited(chainstate.block_limit.clone())?;
+
+    //     // let parent_stacks_header = StacksChainState::get_anchored_block_header_info(
+    //     //     header_reader_chainstate.db(),
+    //     //     &tip_consensus_hash,
+    //     //     &tip_block_hash,
+    //     // )
+    //     // .unwrap()
+    //     // .unwrap();
+
+    //     // // the stacks block I'm mining off of's burn header hash and vtxindex:
+    //     // let burn_dbconn = sortdb.index_conn();
+    //     // let parent_snapshot = SortitionDB::get_block_snapshot_consensus(
+    //     //     &burn_dbconn,
+    //     //     &tip_consensus_hash,
+    //     // )
+    //     // .expect("Failed to look up block's parent snapshot")
+    //     // .expect("Failed to look up block's parent snapshot");
+
+    //     // println!("====> total_burn {:?}", parent_snapshot.total_burn);
+
+    //     // let mut builder = StacksBlockBuilder::make_block_builder(
+    //     //     chainstate.mainnet,
+    //     //     &parent_stacks_header,
+    //     //     proof.clone(),
+    //     //     parent_snapshot.total_burn,
+    //     //     *microblock_public_hash,
+    //     // )?;
+
+    //     // println!("epoch_begin");
+    //     // let mut epoch_tx = builder.epoch_begin(&mut chainstate, &burn_dbconn)?;
+    //     // println!("try_mine coinbase {:#?}", coinbase_tx);
+    //     // builder.try_mine_tx(&mut epoch_tx, coinbase_tx)?;
+
+    //     // println!("get parent_sortition_id, parent_winning_vtxindex");
+    //     // let parent_sortition_id = &parent_snapshot.sortition_id;
+    //     // let parent_winning_vtxindex =
+    //     //     match SortitionDB::get_block_winning_vtxindex(&burn_dbconn, parent_sortition_id)
+    //     //         .expect("SortitionDB failure.")
+    //     //     {
+    //     //         Some(x) => x,
+    //     //         None => {
+    //     //             warn!(
+    //     //                 "Failed to find winning vtx index for the parent sortition {}",
+    //     //                 parent_sortition_id
+    //     //             );
+    //     //             return Err(Error::NoSuchBlockError);
+    //     //         }
+    //     //     };
+
+    //     // let mut ids: Vec<MemPoolTxInfo> = Vec::new();
+
+    //     // println!("get txs");
+    //     // let result = if txids.is_empty() {
+    //     //     // TODO(psq): find all transactions from mempool instead
+    //     //     // allowing for a lighter miner that does not have to keep track of which transaction
+    //     //     // has already been included in which block, and keep track of what is in the mempool
+    //     //     mempool.iterate_candidates(
+    //     //         &tip_consensus_hash,
+    //     //         &tip_block_hash,
+    //     //         tip_height,
+    //     //         &mut header_reader_chainstate,
+    //     //         |available_txs| {
+    //     //             StacksBlockBuilder::consider_transactions(available_txs, &mut builder, &mut epoch_tx)
+    //     //         },
+    //     //     )
+    //     // } else {
+    //     //     // TODO(psq): generate an error if tx can't be found?
+    //     //     // TODO(psq): or just report those that could not be included
+    //     //     for txid in txids.iter() {
+    //     //         if let Ok(Some(id)) = MemPoolDB::get_tx(mempool.conn(), &txid) {
+    //     //             ids.push(id);
+    //     //         } else {
+    //     //             // TODO(psq): build list of txids that can not be included
+    //     //         }
+    //     //     }            
+    //     //     StacksBlockBuilder::consider_transactions(ids, &mut builder, &mut epoch_tx)
+    //     // };
+
+    //     // match result {
+    //     //     Ok(_) => {}
+    //     //     Err(e) => {
+    //     //         warn!("Failure building block: {}", e);
+    //     //         epoch_tx.rollback_block();
+    //     //         return Err(e);
+    //     //     }
+    //     // }
+
+    //     // println!("build block");
+    //     // let block = builder.mine_anchored_block(&mut epoch_tx);
+    //     // let size = builder.bytes_so_far;
+    //     // let consumed = builder.epoch_finish(epoch_tx);
+
+    //     // let parent_block_burn_height: u32 = parent_stacks_header.burn_header_height;
+
+    //     // println!("get_next_recipients");
+    //     // let recipients/*: Option<RewardSetInfo>*/ = match get_next_recipientsPSQ(
+    //     //     &parent_snapshot,
+    //     //     &mut chainstate,
+    //     //     &sortdb,  // TODO(psq): need non mutable flavor for get_next_recipients
+    //     //     &burnchain,
+    //     //     &OnChainRewardSetProvider(),
+    //     // ) {
+    //     //     Ok(x) => x,
+    //     //     Err(e) => {
+    //     //         error!("Failure fetching recipient set: {:?}", e);
+    //     //         return Err(Error::PoxRecipientsNotAvailable);
+    //     //     }
+    //     // };
+
+    //     // println!("StoreMinerBlock");
+    //     // // TODO(psq): this is where the relayer should be an option?
+    //     // // store the block in case it wins sortition
+    //     // if rpc_channel.is_some() {
+    //     //     // TODO(psq): parent_snapshot.burn_header_hash is not the right burn, needs to be highest known instead if we missed a block
+    //     //     let rpc_status = rpc_channel.unwrap().send(RPCDirective::StoreMinerBlock(tip_consensus_hash, burnchain_tip.burn_header_hash, block.clone(), *microblock_secret_key));
+    //     //     println!("rpc_status {:?}", rpc_status);
+    //     //     if !rpc_status.is_ok() {
+    //     //         return Err(Error::RelayerError);
+    //     //     }            
+    //     // }
+
+    //     // println!("returning");
+    //     // Ok((block, consumed, size, tip_height as u32, parent_block_burn_height, parent_winning_vtxindex, recipients))
+
+    //     // Ok((
+    //     //     BlockHeaderHash::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+    //     //     VRFSeed::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+    //     //     0,
+    //     //     0,
+    //     //     0,
+    //     //     0,
+    //     //     None,
+    //     // ))
+
+    // }
+
+
+    pub fn consider_transactions(available_txs: Vec<MemPoolTxInfo>, builder: &mut StacksBlockBuilder, epoch_tx: &mut ClarityTx) -> Result<(), Error> {
+        let mut considered = HashSet::new(); // txids of all transactions we looked at
+        let mut mined_origin_nonces: HashMap<StacksAddress, u64> = HashMap::new(); // map addrs of mined transaction origins to the nonces we used
+        let mut mined_sponsor_nonces: HashMap<StacksAddress, u64> = HashMap::new(); // map addrs of mined transaction sponsors to the nonces we used
+
+        for txinfo in available_txs.into_iter() {
+            // skip transactions early if we can
+            if considered.contains(&txinfo.tx.txid()) {
+                continue;
+            }
+            if let Some(nonce) = mined_origin_nonces.get(&txinfo.tx.origin_address()) {
+                if *nonce >= txinfo.tx.get_origin_nonce() {
+                    continue;
+                }
+            }
+            if let Some(sponsor_addr) = txinfo.tx.sponsor_address() {
+                if let Some(nonce) = mined_sponsor_nonces.get(&sponsor_addr) {
+                    if let Some(sponsor_nonce) = txinfo.tx.get_sponsor_nonce() {
+                        if *nonce >= sponsor_nonce {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            considered.insert(txinfo.tx.txid());
+
+            match builder.try_mine_tx_with_len(
+                epoch_tx,
+                &txinfo.tx,
+                txinfo.metadata.len,
+            ) {
+                Ok(_) => {}
+                Err(Error::BlockTooBigError) => {
+                    // done mining -- our execution budget is exceeded.
+                    // Make the block from the transactions we did manage to get
+                    debug!("Block budget exceeded on tx {}", &txinfo.tx.txid());
+                }
+                Err(Error::InvalidStacksTransaction(_, true)) => {
+                    // if we have an invalid transaction that was quietly ignored, don't warn here either
+                    continue;
+                }
+                Err(e) => {
+                    warn!("Failed to apply tx {}: {:?}", &txinfo.tx.txid(), &e);
+                    continue;
+                }
+            }
+
+            mined_origin_nonces
+                .insert(txinfo.tx.origin_address(), txinfo.tx.get_origin_nonce());
+            if let (Some(sponsor_addr), Some(sponsor_nonce)) =
+                (txinfo.tx.sponsor_address(), txinfo.tx.get_sponsor_nonce())
+            {
+                mined_sponsor_nonces.insert(sponsor_addr, sponsor_nonce);
+            }
+        }
+        Ok(())
+    }
+
     /// Given access to the mempool, mine an anchored block with no more than the given execution cost.
     ///   returns the assembled block, and the consumed execution budget.
     pub fn build_anchored_block(
@@ -1250,6 +2053,7 @@ impl StacksBlockBuilder {
         pubkey_hash: Hash160,
         coinbase_tx: &StacksTransaction,
         execution_budget: ExecutionCost,
+        txids: Option<Vec<Txid>>,
     ) -> Result<(StacksBlock, ExecutionCost, u64), Error> {
         if let TransactionPayload::Coinbase(..) = coinbase_tx.payload {
         } else {
@@ -1283,70 +2087,99 @@ impl StacksBlockBuilder {
         let mut epoch_tx = builder.epoch_begin(&mut chainstate, burn_dbconn)?;
         builder.try_mine_tx(&mut epoch_tx, coinbase_tx)?;
 
-        let mut considered = HashSet::new(); // txids of all transactions we looked at
-        let mut mined_origin_nonces: HashMap<StacksAddress, u64> = HashMap::new(); // map addrs of mined transaction origins to the nonces we used
-        let mut mined_sponsor_nonces: HashMap<StacksAddress, u64> = HashMap::new(); // map addrs of mined transaction sponsors to the nonces we used
-
-        let result = mempool.iterate_candidates(
-            &tip_consensus_hash,
-            &tip_block_hash,
-            tip_height,
-            &mut header_reader_chainstate,
-            |available_txs| {
-                for txinfo in available_txs.into_iter() {
-                    // skip transactions early if we can
-                    if considered.contains(&txinfo.tx.txid()) {
-                        continue;
-                    }
-                    if let Some(nonce) = mined_origin_nonces.get(&txinfo.tx.origin_address()) {
-                        if *nonce >= txinfo.tx.get_origin_nonce() {
-                            continue;
-                        }
-                    }
-                    if let Some(sponsor_addr) = txinfo.tx.sponsor_address() {
-                        if let Some(nonce) = mined_sponsor_nonces.get(&sponsor_addr) {
-                            if let Some(sponsor_nonce) = txinfo.tx.get_sponsor_nonce() {
-                                if *nonce >= sponsor_nonce {
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-
-                    considered.insert(txinfo.tx.txid());
-
-                    match builder.try_mine_tx_with_len(
-                        &mut epoch_tx,
-                        &txinfo.tx,
-                        txinfo.metadata.len,
-                    ) {
-                        Ok(_) => {}
-                        Err(Error::BlockTooBigError) => {
-                            // done mining -- our execution budget is exceeded.
-                            // Make the block from the transactions we did manage to get
-                            debug!("Block budget exceeded on tx {}", &txinfo.tx.txid());
-                        }
-                        Err(Error::InvalidStacksTransaction(_, true)) => {
-                            // if we have an invalid transaction that was quietly ignored, don't warn here either
-                            continue;
-                        }
-                        Err(e) => {
-                            warn!("Failed to apply tx {}: {:?}", &txinfo.tx.txid(), &e);
-                            continue;
-                        }
-                    }
-
-                    mined_origin_nonces
-                        .insert(txinfo.tx.origin_address(), txinfo.tx.get_origin_nonce());
-                    if let (Some(sponsor_addr), Some(sponsor_nonce)) =
-                        (txinfo.tx.sponsor_address(), txinfo.tx.get_sponsor_nonce())
-                    {
-                        mined_sponsor_nonces.insert(sponsor_addr, sponsor_nonce);
-                    }
+        let result = if txids.is_none() {
+            // TODO(psq): find all transactions from mempool instead
+            // allowing for a lighter miner that does not have to keep track of which transaction
+            // has already been included in which block, and keep track of what is in the mempool
+            mempool.iterate_candidates(
+                &tip_consensus_hash,
+                &tip_block_hash,
+                tip_height,
+                &mut header_reader_chainstate,
+                |available_txs| {
+                    StacksBlockBuilder::consider_transactions(available_txs, &mut builder, &mut epoch_tx)
+                },
+            )
+        } else {
+            // TODO(psq): generate an error if tx can't be found?
+            // TODO(psq): or just report those that could not be included
+            // TODO(psq): for now, silently ignore those that can't be included, perhaps most suitable behavior anyway
+            let mut ids: Vec<MemPoolTxInfo> = Vec::new();
+            for txid in txids.unwrap().iter() {
+                if let Ok(Some(id)) = MemPoolDB::get_tx(mempool.conn(), &txid) {
+                    ids.push(id);
+                } else {
+                    // TODO(psq): build list of txids that can not be included
                 }
-                Ok(())
-            },
-        );
+            }            
+            StacksBlockBuilder::consider_transactions(ids, &mut builder, &mut epoch_tx)
+        };
+
+
+        // let mut considered = HashSet::new(); // txids of all transactions we looked at
+        // let mut mined_origin_nonces: HashMap<StacksAddress, u64> = HashMap::new(); // map addrs of mined transaction origins to the nonces we used
+        // let mut mined_sponsor_nonces: HashMap<StacksAddress, u64> = HashMap::new(); // map addrs of mined transaction sponsors to the nonces we used
+
+        // let result = mempool.iterate_candidates(
+        //     &tip_consensus_hash,
+        //     &tip_block_hash,
+        //     tip_height,
+        //     &mut header_reader_chainstate,
+        //     |available_txs| {
+        //         for txinfo in available_txs.into_iter() {
+        //             // skip transactions early if we can
+        //             if considered.contains(&txinfo.tx.txid()) {
+        //                 continue;
+        //             }
+        //             if let Some(nonce) = mined_origin_nonces.get(&txinfo.tx.origin_address()) {
+        //                 if *nonce >= txinfo.tx.get_origin_nonce() {
+        //                     continue;
+        //                 }
+        //             }
+        //             if let Some(sponsor_addr) = txinfo.tx.sponsor_address() {
+        //                 if let Some(nonce) = mined_sponsor_nonces.get(&sponsor_addr) {
+        //                     if let Some(sponsor_nonce) = txinfo.tx.get_sponsor_nonce() {
+        //                         if *nonce >= sponsor_nonce {
+        //                             continue;
+        //                         }
+        //                     }
+        //                 }
+        //             }
+
+        //             considered.insert(txinfo.tx.txid());
+
+        //             match builder.try_mine_tx_with_len(
+        //                 &mut epoch_tx,
+        //                 &txinfo.tx,
+        //                 txinfo.metadata.len,
+        //             ) {
+        //                 Ok(_) => {}
+        //                 Err(Error::BlockTooBigError) => {
+        //                     // done mining -- our execution budget is exceeded.
+        //                     // Make the block from the transactions we did manage to get
+        //                     debug!("Block budget exceeded on tx {}", &txinfo.tx.txid());
+        //                 }
+        //                 Err(Error::InvalidStacksTransaction(_, true)) => {
+        //                     // if we have an invalid transaction that was quietly ignored, don't warn here either
+        //                     continue;
+        //                 }
+        //                 Err(e) => {
+        //                     warn!("Failed to apply tx {}: {:?}", &txinfo.tx.txid(), &e);
+        //                     continue;
+        //                 }
+        //             }
+
+        //             mined_origin_nonces
+        //                 .insert(txinfo.tx.origin_address(), txinfo.tx.get_origin_nonce());
+        //             if let (Some(sponsor_addr), Some(sponsor_nonce)) =
+        //                 (txinfo.tx.sponsor_address(), txinfo.tx.get_sponsor_nonce())
+        //             {
+        //                 mined_sponsor_nonces.insert(sponsor_addr, sponsor_nonce);
+        //             }
+        //         }
+        //         Ok(())
+        //     },
+        // );
 
         match result {
             Ok(_) => {}

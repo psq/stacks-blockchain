@@ -456,6 +456,7 @@ impl Node {
             burnchain,
             view,
             self.config.connection_options.clone(),
+            None,
         );
         let _join_handle = spawn_peer(
             self.config.is_mainnet(),

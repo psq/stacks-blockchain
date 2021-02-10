@@ -52,6 +52,8 @@ use net::MessageSequence;
 use net::NeighborAddress;
 use net::PeerAddress;
 use net::PeerHost;
+use net::RegisterKeyRequestBody;
+use net::PostBuildBlockTemplateRequestBody;
 use net::ProtocolFamily;
 use net::StacksHttpMessage;
 use net::StacksHttpPreamble;
@@ -135,6 +137,7 @@ lazy_static! {
     static ref PATH_GET_ATTACHMENTS_INV: Regex = Regex::new("^/v2/attachments/inv$").unwrap();
     static ref PATH_GET_ATTACHMENT: Regex =
         Regex::new(r#"^/v2/attachments/([0-9a-f]{40})$"#).unwrap();
+    static ref PATH_POST_BUILD_BLOCK: Regex = Regex::new(r#"^/v2/miner/build-block$"#).unwrap();
     static ref PATH_OPTIONS_WILDCARD: Regex = Regex::new("^/v2/.{0,4096}$").unwrap();
 }
 
@@ -1503,6 +1506,11 @@ impl HttpRequestType {
                 &HttpRequestType::parse_call_read_only,
             ),
             (
+                "POST",
+                &PATH_POST_BUILD_BLOCK,
+                &HttpRequestType::parse_post_build_block,
+            ),
+            (
                 "OPTIONS",
                 &PATH_OPTIONS_WILDCARD,
                 &HttpRequestType::parse_options_preflight,
@@ -1804,6 +1812,82 @@ impl HttpRequestType {
             func_name,
             arguments,
             tip,
+        ))
+    }
+
+    fn parse_post_register_key<R: Read>(
+        protocol: &mut StacksHttp,
+        preamble: &HttpRequestPreamble,
+        _captures: &Captures,
+        _query: Option<&str>,
+        fd: &mut R,
+    ) -> Result<HttpRequestType, net_error> {
+        let content_len = preamble.get_content_length();
+        if !(content_len > 0 && content_len < protocol.maximum_call_argument_size) {
+            return Err(net_error::DeserializeError(format!(
+                "Invalid Http request: invalid body length for CallReadOnly ({})",
+                content_len
+            )));
+        }
+
+        if preamble.content_type != Some(HttpContentType::JSON) {
+            return Err(net_error::DeserializeError(
+                "Invalid content-type: expected application/json".to_string(),
+            ));
+        }
+
+        let body: RegisterKeyRequestBody = serde_json::from_reader(fd)
+            .map_err(|_e| net_error::DeserializeError("Failed to parse JSON body".into()))?;
+
+        let parent_consensus_hash = body.parent_consensus_hash;
+
+        Ok(HttpRequestType::PostRegisterKey(
+            HttpRequestMetadata::from_preamble(preamble),
+            parent_consensus_hash,
+        ))
+    }
+
+    fn parse_post_build_block<R: Read>(
+        protocol: &mut StacksHttp,
+        preamble: &HttpRequestPreamble,
+        _captures: &Captures,
+        _query: Option<&str>,
+        fd: &mut R,
+    ) -> Result<HttpRequestType, net_error> {
+        let content_len = preamble.get_content_length();
+        if !(content_len > 0 && content_len < protocol.maximum_call_argument_size) {
+            return Err(net_error::DeserializeError(format!(
+                "Invalid Http request: invalid body length for CallReadOnly ({})",
+                content_len
+            )));
+        }
+
+        if preamble.content_type != Some(HttpContentType::JSON) {
+            return Err(net_error::DeserializeError(
+                "Invalid content-type: expected application/json".to_string(),
+            ));
+        }
+
+        let body: PostBuildBlockTemplateRequestBody = serde_json::from_reader(fd)
+            .map_err(|_e| net_error::DeserializeError("Failed to parse JSON body".into()))?;
+
+        let vrf_pk = body.vrf_pk;
+        let anchored_block_hash = body.anchored_block_hash;
+        let parent_consensus_hash = body.parent_consensus_hash;
+        let parent_block_burn_height = body.parent_block_burn_height;
+        let parent_winning_vtxindex = body.parent_winning_vtxindex;
+        let target_burn_block_height = body.target_burn_block_height;
+        let txids = body.txids;
+
+        Ok(HttpRequestType::PostBuildBlockTemplate(
+            HttpRequestMetadata::from_preamble(preamble),
+            vrf_pk,
+            anchored_block_hash,
+            parent_consensus_hash,
+            parent_block_burn_height,
+            parent_winning_vtxindex,
+            target_burn_block_height,
+            txids,
         ))
     }
 
@@ -2272,6 +2356,8 @@ impl HttpRequestType {
             HttpRequestType::GetContractABI(ref md, ..) => md,
             HttpRequestType::GetContractSrc(ref md, ..) => md,
             HttpRequestType::CallReadOnlyFunction(ref md, ..) => md,
+            HttpRequestType::PostRegisterKey(ref md, ..) => md,
+            HttpRequestType::PostBuildBlockTemplate(ref md, ..) => md,
             HttpRequestType::OptionsPreflight(ref md, ..) => md,
             HttpRequestType::GetAttachmentsInv(ref md, ..) => md,
             HttpRequestType::GetAttachment(ref md, ..) => md,
@@ -2297,6 +2383,8 @@ impl HttpRequestType {
             HttpRequestType::GetContractABI(ref mut md, ..) => md,
             HttpRequestType::GetContractSrc(ref mut md, ..) => md,
             HttpRequestType::CallReadOnlyFunction(ref mut md, ..) => md,
+            HttpRequestType::PostRegisterKey(ref mut md, ..) => md,
+            HttpRequestType::PostBuildBlockTemplate(ref mut md, ..) => md,
             HttpRequestType::OptionsPreflight(ref mut md, ..) => md,
             HttpRequestType::GetAttachmentsInv(ref mut md, ..) => md,
             HttpRequestType::GetAttachment(ref mut md, ..) => md,
@@ -2398,6 +2486,8 @@ impl HttpRequestType {
                 func_name.as_str(),
                 HttpRequestType::make_query_string(tip_opt.as_ref(), true)
             ),
+            HttpRequestType::PostRegisterKey(_md, ..) => "/v2/miner/register-key".to_string(),
+            HttpRequestType::PostBuildBlockTemplate(_md, ..) => "/v2/miner/build-block".to_string(),
             HttpRequestType::OptionsPreflight(_md, path) => path.to_string(),
             HttpRequestType::GetAttachmentsInv(_md, tip_opt, pages_indexes) => {
                 let prefix = if tip_opt.is_some() { "&" } else { "?" };
@@ -3052,6 +3142,36 @@ impl HttpResponseType {
         ))
     }
 
+    fn parse_register_key<R: Read>(
+        _protocol: &mut StacksHttp,
+        request_version: HttpVersion,
+        preamble: &HttpResponsePreamble,
+        fd: &mut R,
+        len_hint: Option<usize>,
+    ) -> Result<HttpResponseType, net_error> {
+        let call_data =
+            HttpResponseType::parse_json(preamble, fd, len_hint, MAX_MESSAGE_LEN as u64)?;
+        Ok(HttpResponseType::PostRegisterKey(
+            HttpResponseMetadata::from_preamble(request_version, preamble),
+            call_data,
+        ))
+    }
+
+    fn parse_build_block<R: Read>(
+        _protocol: &mut StacksHttp,
+        request_version: HttpVersion,
+        preamble: &HttpResponsePreamble,
+        fd: &mut R,
+        len_hint: Option<usize>,
+    ) -> Result<HttpResponseType, net_error> {
+        let call_data =
+            HttpResponseType::parse_json(preamble, fd, len_hint, MAX_MESSAGE_LEN as u64)?;
+        Ok(HttpResponseType::PostBuildBlockTemplate(
+            HttpResponseMetadata::from_preamble(request_version, preamble),
+            call_data,
+        ))
+    }
+
     fn parse_microblocks_unconfirmed<R: Read>(
         _protocol: &mut StacksHttp,
         request_version: HttpVersion,
@@ -3247,6 +3367,8 @@ impl HttpResponseType {
             HttpResponseType::UnconfirmedTransaction(ref md, _) => md,
             HttpResponseType::GetAttachment(ref md, _) => md,
             HttpResponseType::GetAttachmentsInv(ref md, _) => md,
+            HttpResponseType::PostRegisterKey(ref md, _) => md,
+            HttpResponseType::PostBuildBlockTemplate(ref md, _) => md,
             HttpResponseType::OptionsPreflight(ref md) => md,
             // errors
             HttpResponseType::BadRequestJSON(ref md, _) => md,
@@ -3366,6 +3488,14 @@ impl HttpResponseType {
             HttpResponseType::GetAttachmentsInv(ref md, ref zonefile_data) => {
                 HttpResponsePreamble::ok_JSON_from_md(fd, md)?;
                 HttpResponseType::send_json(protocol, md, fd, zonefile_data)?;
+            }
+            HttpResponseType::PostRegisterKey(ref md, ref data) => {
+                HttpResponsePreamble::ok_JSON_from_md(fd, md)?;
+                HttpResponseType::send_json(protocol, md, fd, data)?;
+            }
+            HttpResponseType::PostBuildBlockTemplate(ref md, ref data) => {
+                HttpResponsePreamble::ok_JSON_from_md(fd, md)?;
+                HttpResponseType::send_json(protocol, md, fd, data)?;
             }
             HttpResponseType::Block(ref md, ref block) => {
                 HttpResponsePreamble::new_serialized(
@@ -3559,6 +3689,8 @@ impl MessageSequence for StacksHttpMessage {
                 HttpRequestType::CallReadOnlyFunction(..) => "HTTP(CallReadOnlyFunction)",
                 HttpRequestType::GetAttachment(..) => "HTTP(GetAttachment)",
                 HttpRequestType::GetAttachmentsInv(..) => "HTTP(GetAttachmentsInv)",
+                HttpRequestType::PostRegisterKey(..) => "HTTP(PostRegisterKey)",
+                HttpRequestType::PostBuildBlockTemplate(..) => "HTTP(PostBuildBlockTemplate)",
                 HttpRequestType::OptionsPreflight(..) => "HTTP(OptionsPreflight)",
                 HttpRequestType::ClientError(..) => "HTTP(ClientError)",
             },
@@ -3581,6 +3713,8 @@ impl MessageSequence for StacksHttpMessage {
                 HttpResponseType::TransactionID(_, _) => "HTTP(Transaction)",
                 HttpResponseType::MicroblockHash(_, _) => "HTTP(Microblock)",
                 HttpResponseType::UnconfirmedTransaction(_, _) => "HTTP(UnconfirmedTransaction)",
+                HttpResponseType::PostRegisterKey(_, _) => "HTTP(RegisterKey)",
+                HttpResponseType::PostBuildBlockTemplate(_, _) => "HTTP(BuildBlockTemplate)",
                 HttpResponseType::OptionsPreflight(_) => "HTTP(OptionsPreflight)",
                 HttpResponseType::BadRequestJSON(..) | HttpResponseType::BadRequest(..) => {
                     "HTTP(400)"

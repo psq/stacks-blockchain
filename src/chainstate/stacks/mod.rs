@@ -150,6 +150,10 @@ impl AddressHashMode {
 
 #[derive(Debug)]
 pub enum Error {
+    FailedToMineBlock,
+    FailedToStoreBlock,
+    FailedToComputeRecipients,
+    InvalidProof,
     InvalidFee,
     InvalidStacksBlock(String),
     InvalidStacksMicroblock(String, BlockHeaderHash),
@@ -196,6 +200,10 @@ impl From<net_error> for Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            Error::FailedToMineBlock => write!(f, "Failed to mine block"),
+            Error::FailedToStoreBlock => write!(f, "Failed to store block"),
+            Error::FailedToComputeRecipients => write!(f, "Failed to compute recipients"),
+            Error::InvalidProof => write!(f, "Calculated invalid proof"),
             Error::InvalidFee => write!(f, "Invalid fee"),
             Error::InvalidStacksBlock(ref s) => fmt::Display::fmt(s, f),
             Error::InvalidStacksMicroblock(ref s, _) => fmt::Display::fmt(s, f),
@@ -235,6 +243,10 @@ impl fmt::Display for Error {
 impl error::Error for Error {
     fn cause(&self) -> Option<&dyn error::Error> {
         match *self {
+            Error::FailedToMineBlock => None,
+            Error::FailedToStoreBlock => None,
+            Error::FailedToComputeRecipients => None,
+            Error::InvalidProof => None,
             Error::InvalidFee => None,
             Error::InvalidStacksBlock(ref _s) => None,
             Error::InvalidStacksMicroblock(ref _s, ref _h) => None,
@@ -265,6 +277,10 @@ impl error::Error for Error {
 impl Error {
     fn name(&self) -> &'static str {
         match self {
+            Error::FailedToMineBlock => "FailedToMineBlock",
+            Error::FailedToStoreBlock => "FailedToStoreBlock",
+            Error::FailedToComputeRecipients => "FailedToComputeRecipients",
+            Error::InvalidProof => "InvalidProof",
             Error::InvalidFee => "InvalidFee",
             Error::InvalidStacksBlock(ref _s) => "InvalidStacksBlock",
             Error::InvalidStacksMicroblock(ref _s, ref _h) => "InvalidStacksMicroblock",

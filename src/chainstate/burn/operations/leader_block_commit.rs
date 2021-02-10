@@ -443,7 +443,7 @@ impl StacksMessageCodec for LeaderBlockCommitOp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
 pub struct RewardSetInfo {
     pub anchor_block: BlockHeaderHash,
     pub recipients: Vec<(StacksAddress, u16)>,

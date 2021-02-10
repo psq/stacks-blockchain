@@ -47,7 +47,7 @@ use std::fmt;
 use rand;
 use util::hash::hex_bytes;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct VRFPublicKey(pub ed25519_PublicKey);
 
 pub struct VRFPrivateKey(pub ed25519_PrivateKey);
@@ -66,6 +66,28 @@ impl<'de> serde::Deserialize<'de> for VRFPublicKey {
             .ok_or_else(|| serde::de::Error::custom("Failed to parse VRF Public Key from hex"))
     }
 }
+
+impl serde::Serialize for VRFPrivateKey {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let inst = self.to_hex();
+        s.serialize_str(inst.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for VRFPrivateKey {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<VRFPrivateKey, D::Error> {
+        let inst_str = String::deserialize(d)?;
+        VRFPrivateKey::from_hex(&inst_str)
+            .ok_or_else(|| serde::de::Error::custom("Failed to parse VRF Secret Key from hex"))
+    }
+}
+
+impl PartialEq for VRFPrivateKey {
+    fn eq(&self, other: &VRFPrivateKey) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
 
 // have to do Clone separately since ed25519_PrivateKey doesn't implement Clone
 impl Clone for VRFPrivateKey {

@@ -70,8 +70,10 @@ use burnchains::BURNCHAIN_HEADER_HASH_ENCODED_SIZE;
 
 use chainstate::burn::BlockHeaderHash;
 use chainstate::burn::ConsensusHash;
+use chainstate::burn::VRFSeed;
 
 use chainstate::burn::db::sortdb::PoxId;
+use chainstate::burn::operations::leader_block_commit::RewardSetInfo;
 
 use chainstate::stacks::db::blocks::MemPoolRejection;
 use chainstate::stacks::{
@@ -102,6 +104,7 @@ use util::strings::UrlString;
 
 use util::get_epoch_time_secs;
 use util::hash::{hex_bytes, to_hex};
+use util::vrf::{ VRFPrivateKey, VRFPublicKey };
 
 use serde::de::Error as de_Error;
 use serde::ser::Error as ser_Error;
@@ -221,6 +224,8 @@ pub enum Error {
     ConnectionCycle,
     /// Requested data not found
     NotFoundError,
+    /// Miner error
+    MinerNotResponding,
 }
 
 /// Enum for passing data for ClientErrors
@@ -303,6 +308,7 @@ impl fmt::Display for Error {
             Error::StaleView => write!(f, "State view is stale"),
             Error::ConnectionCycle => write!(f, "Tried to connect to myself"),
             Error::NotFoundError => write!(f, "Requested data not found"),
+            Error::MinerNotResponding => write!(f, "Couldn't connect to internal miner relayer"),
         }
     }
 }
@@ -361,6 +367,7 @@ impl error::Error for Error {
             Error::StaleView => None,
             Error::ConnectionCycle => None,
             Error::NotFoundError => None,
+            Error::MinerNotResponding => None,
         }
     }
 }
@@ -1071,6 +1078,41 @@ pub struct ContractSrcResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BuildBlockTemplateResponse {
+    #[serde(rename = "block-hash")]
+    pub block_hash: BlockHeaderHash,
+    #[serde(rename = "new-seed")]
+    pub new_seed: VRFSeed,
+    pub recipients: Vec<StacksAddress>,
+}
+
+#[derive(Debug)]
+pub enum BuildBlockTemplateRPCResponse {
+    BuildBlockTemplateRPCResponseOk {
+        response: BuildBlockTemplateResponse,
+    },
+    BuildBlockTemplateRPCResponseErr {
+        err: chain_error,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RegisterKeyResponse {
+    #[serde(rename = "vrf-public-key")]
+    pub vrf_public_key: VRFPublicKey,
+}
+
+#[derive(Debug)]
+pub enum RegisterKeyRPCResponse {
+    RegisterKeyRPCResponseOk {
+        response: RegisterKeyResponse,
+    },
+    RegisterKeyRPCResponseErr {
+        err: chain_error,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallReadOnlyResponse {
     pub okay: bool,
     #[serde(default)]
@@ -1171,6 +1213,32 @@ pub struct CallReadOnlyRequestBody {
     pub arguments: Vec<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct RegisterKeyRequestBody {
+    #[serde(rename = "parent-consensus-hash")]
+    pub parent_consensus_hash: ConsensusHash,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PostBuildBlockTemplateRequestBody {
+    #[serde(rename = "vrf-pk")]
+    pub vrf_pk: VRFPublicKey,
+    #[serde(rename = "anchored-block-hash")]
+    pub anchored_block_hash: BlockHeaderHash,
+    #[serde(rename = "parent-consensus-hash")]
+    pub parent_consensus_hash: ConsensusHash,
+    #[serde(rename = "parent-block-burn_height")]
+    pub parent_block_burn_height: u64,
+    #[serde(rename = "parent-winning-vtxindex")]
+    pub parent_winning_vtxindex: u16,
+    #[serde(rename = "target-burn-block-height")]
+    pub target_burn_block_height: u64,
+    #[serde(rename = "txids")]
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub txids: Option<Vec<Txid>>,
+}
+
 /// Items in the NeighborsInfo -- combines NeighborKey and NeighborAddress
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RPCNeighbor {
@@ -1254,6 +1322,20 @@ pub enum HttpRequestType {
         StacksAddress,
         ContractName,
         Option<StacksBlockId>,
+    ),
+    PostRegisterKey(
+        HttpRequestMetadata,
+        ConsensusHash,
+    ),
+    PostBuildBlockTemplate(
+        HttpRequestMetadata,
+        VRFPublicKey,
+        BlockHeaderHash,
+        ConsensusHash,
+        u64,
+        u16,
+        u64,
+        Option<Vec<Txid>>,
     ),
     OptionsPreflight(HttpRequestMetadata, String),
     GetAttachment(HttpRequestMetadata, Hash160),
@@ -1350,6 +1432,8 @@ pub enum HttpResponseType {
     UnconfirmedTransaction(HttpResponseMetadata, UnconfirmedTransactionResponse),
     GetAttachment(HttpResponseMetadata, GetAttachmentResponse),
     GetAttachmentsInv(HttpResponseMetadata, GetAttachmentsInvResponse),
+    PostRegisterKey(HttpResponseMetadata, RegisterKeyResponse),
+    PostBuildBlockTemplate(HttpResponseMetadata, BuildBlockTemplateResponse),
     OptionsPreflight(HttpResponseMetadata),
     // peer-given error responses
     BadRequest(HttpResponseMetadata, String),

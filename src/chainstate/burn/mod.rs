@@ -62,6 +62,7 @@ impl_array_hexstring_fmt!(ConsensusHash);
 impl_byte_array_newtype!(ConsensusHash, u8, 20);
 pub const CONSENSUS_HASH_ENCODED_SIZE: u32 = 20;
 
+#[derive(Default)]
 pub struct BlockHeaderHash(pub [u8; 32]);
 impl_array_newtype!(BlockHeaderHash, u8, 32);
 impl_array_hexstring_fmt!(BlockHeaderHash);
