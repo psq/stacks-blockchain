@@ -16,6 +16,7 @@ use stacks::chainstate::burn::operations::{
     LeaderKeyRegisterOp, PreStxOp, StackStxOp, TransferStxOp, UserBurnSupportOp,
 };
 use stacks::chainstate::burn::BlockSnapshot;
+use stacks::deps::bitcoin::util::hash::Sha256dHash;
 use stacks::util::get_epoch_time_secs;
 use stacks::util::hash::Sha256Sum;
 
@@ -118,9 +119,9 @@ impl BurnchainController for MocknetController {
         operation: BlockstackOperationType,
         _op_signer: &mut BurnchainOpSigner,
         _attempt: u64,
-    ) -> bool {
+    ) -> Option<Sha256dHash> {
         self.queued_operations.push_back(operation);
-        true
+        None
     }
 
     fn sync(

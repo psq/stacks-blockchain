@@ -33,6 +33,7 @@ use stacks::chainstate::stacks::{
     TransactionVersion,
 };
 use stacks::core::mempool::MemPoolDB;
+use stacks::deps::bitcoin::util::hash::Sha256dHash;
 use stacks::net::{
     atlas::{AtlasConfig, AtlasDB, AttachmentInstance},
     db::{LocalPeer, PeerDB},
@@ -243,7 +244,7 @@ fn rotate_vrf_and_register(
     keychain: &mut Keychain,
     burn_block: &BlockSnapshot,
     btc_controller: &mut BitcoinRegtestController,
-) -> Option<VRFPublicKey> {
+) -> Option<(Sha256dHash, VRFPublicKey)> {
     let vrf_public_key = keychain.rotate_vrf_keypair(burn_block.block_height);
 
     let vrf_pk = vrf_public_key.clone();
@@ -266,8 +267,9 @@ fn rotate_vrf_and_register(
     );
 
     let mut one_off_signer = keychain.generate_op_signer();
-    if btc_controller.submit_operation(op, &mut one_off_signer, 1) {
-        return Some(vrf_public_key);      
+    let txid_opt = btc_controller.submit_operation(op, &mut one_off_signer, 1);
+    if txid_opt.is_some() {
+        return Some((txid_opt.unwrap(), vrf_public_key));      
     }
     None
 }
@@ -1008,9 +1010,10 @@ fn spawn_miner_relayer(
                                     &snapshot,
                                     &mut bitcoin_controller,
                                 ) {
-                                    Some(vrf_public_key) => {
+                                    Some((txid, vrf_public_key)) => {
                                         let response = RegisterKeyResponse {
                                             vrf_public_key,
+                                            txid,
                                         };
                                         if let Err(err) = tx.send(RegisterKeyRPCResponseOk { response }) {
                                             error!("Error sending back RegisterKey response {:?}", err);
@@ -2198,7 +2201,7 @@ impl InitializedNeonNode {
         );
 
         let res = bitcoin_controller.submit_operation(op, &mut op_signer, attempt);
-        if !res {
+        if res.is_none() {
             warn!("Failed to submit Bitcoin transaction");
             return None;
         }

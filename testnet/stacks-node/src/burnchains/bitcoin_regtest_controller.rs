@@ -945,16 +945,16 @@ impl BitcoinRegtestController {
         unimplemented!()
     }
 
-    fn send_transaction(&self, transaction: SerializedTx) -> bool {
+    fn send_transaction(&self, transaction: SerializedTx) -> Option<Sha256dHash> {
         let result = BitcoinRPCRequest::send_raw_transaction(&self.config, transaction.to_hex());
         match result {
-            Ok(_) => true,
+            Ok(txid) => Some(txid),
             Err(e) => {
                 error!(
                     "Bitcoin RPC failure: transaction submission failed - {:?}",
                     e
                 );
-                false
+                None
             }
         }
     }
@@ -1138,7 +1138,7 @@ impl BurnchainController for BitcoinRegtestController {
         operation: BlockstackOperationType,
         op_signer: &mut BurnchainOpSigner,
         attempt: u64,
-    ) -> bool {
+    ) -> Option<Sha256dHash> {
         let transaction = match operation {
             BlockstackOperationType::LeaderBlockCommit(payload) => {
                 self.build_leader_block_commit_tx(payload, op_signer, attempt)
@@ -1160,7 +1160,7 @@ impl BurnchainController for BitcoinRegtestController {
 
         let transaction = match transaction {
             Some(tx) => SerializedTx::new(tx),
-            _ => return false,
+            _ => return None,
         };
 
         self.send_transaction(transaction)
@@ -1438,7 +1438,7 @@ impl BitcoinRPCRequest {
         Ok(vec![])
     }
 
-    pub fn send_raw_transaction(config: &Config, tx: String) -> RPCResult<()> {
+    pub fn send_raw_transaction(config: &Config, tx: String) -> RPCResult<Sha256dHash> {
         let payload = BitcoinRPCRequest {
             method: "sendrawtransaction".to_string(),
             params: vec![tx.into()],
@@ -1454,7 +1454,11 @@ impl BitcoinRPCRequest {
                 return Err(RPCError::Bitcoind(json_resp.to_string()));
             }
         }
-        Ok(())
+        if let Some(serde_json::Value::String(hex)) = json_resp.get("result") {
+            println!("result {:?}", hex);
+            return Ok(Sha256dHash::from_hex(&hex).unwrap())
+        }
+        return Err(RPCError::Bitcoind("failed to parse result transaction id".to_string()));
     }
 
     pub fn import_public_key(config: &Config, public_key: &Secp256k1PublicKey) -> RPCResult<()> {

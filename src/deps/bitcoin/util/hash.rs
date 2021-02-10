@@ -250,7 +250,7 @@ impl Sha256dHash {
     }
 }
 
-#[cfg(feature = "serde")]
+// #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for Sha256dHash {
     #[inline]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -293,7 +293,7 @@ impl<'de> serde::Deserialize<'de> for Sha256dHash {
     }
 }
 
-#[cfg(feature = "serde")]
+// #[cfg(feature = "serde")]
 impl serde::Serialize for Sha256dHash {
     /// Serialize a `Sha256dHash`.
     ///

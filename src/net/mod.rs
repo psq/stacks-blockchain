@@ -83,6 +83,8 @@ use chainstate::stacks::{
 
 use chainstate::stacks::Error as chainstate_error;
 
+use deps::bitcoin::util::hash::Sha256dHash;
+
 use vm::{
     analysis::contract_interface_builder::ContractInterface, types::PrincipalData, ClarityName,
     ContractName, Value,
@@ -1100,6 +1102,7 @@ pub enum BuildBlockTemplateRPCResponse {
 pub struct RegisterKeyResponse {
     #[serde(rename = "vrf-public-key")]
     pub vrf_public_key: VRFPublicKey,
+    pub txid: Sha256dHash,
 }
 
 #[derive(Debug)]

@@ -14,6 +14,7 @@ use stacks::burnchains::BurnchainStateTransitionOps;
 use stacks::chainstate::burn::db::sortdb::SortitionDB;
 use stacks::chainstate::burn::operations::BlockstackOperationType;
 use stacks::chainstate::burn::BlockSnapshot;
+use stacks::deps::bitcoin::util::hash::Sha256dHash;
 
 #[derive(Debug)]
 pub enum Error {
@@ -38,7 +39,7 @@ pub trait BurnchainController {
         operation: BlockstackOperationType,
         op_signer: &mut BurnchainOpSigner,
         attempt: u64,
-    ) -> bool;
+    ) -> Option<Sha256dHash>;
     fn sync(&mut self, target_block_height_opt: Option<u64>) -> Result<(BurnchainTip, u64), Error>;
     fn sortdb_ref(&self) -> &SortitionDB;
     fn sortdb_mut(&mut self) -> &mut SortitionDB;
