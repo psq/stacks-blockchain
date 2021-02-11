@@ -1213,7 +1213,7 @@ impl StacksBlockBuilder {
                 0,
                 &FIRST_BURNCHAIN_CONSENSUS_HASH,
                 &first_block_hash,
-                BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT as u32,
+                *BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT as u32,
                 BITCOIN_REGTEST_FIRST_BLOCK_TIMESTAMP as u64,
                 &proof,
                 pubkey_hash,

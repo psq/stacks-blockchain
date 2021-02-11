@@ -307,7 +307,7 @@ impl HeadersDB for NullHeadersDB {
                 &FIRST_STACKS_BLOCK_HASH,
             )
         {
-            Some(BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT as u32)
+            Some(*BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT as u32)
         } else {
             None
         }

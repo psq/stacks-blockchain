@@ -15,6 +15,9 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 // This module contains the "main loop" that drives everything
+
+use std::env;
+
 use burnchains::Error as burnchain_error;
 use burnchains::{Burnchain, BurnchainHeaderHash};
 use chainstate::burn::{BlockHeaderHash, ConsensusHash};
@@ -74,7 +77,11 @@ pub const BITCOIN_TESTNET_FIRST_BLOCK_TIMESTAMP: u32 = 1609852982;
 pub const BITCOIN_TESTNET_FIRST_BLOCK_HASH: &str =
     "00000000a3302490b1e1cbbdfcfacc21662006889765d3cda906fd8e842427f1";
 
-pub const BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT: u64 = 0;
+// pub const BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT: u64 = 0;
+lazy_static! {
+    pub static ref BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT: u64 = env::var("FIRST_BLOCK").unwrap_or("0".to_string()).parse::<u64>().unwrap();
+}
+
 pub const BITCOIN_REGTEST_FIRST_BLOCK_TIMESTAMP: u32 = 0;
 pub const BITCOIN_REGTEST_FIRST_BLOCK_HASH: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";

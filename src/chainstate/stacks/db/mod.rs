@@ -29,6 +29,7 @@ use rusqlite::Transaction;
 use rusqlite::NO_PARAMS;
 
 use std::collections::{btree_map::Entry, BTreeMap};
+use std::env;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -940,248 +941,250 @@ impl StacksChainState {
                 allocation_events.push(mint_event);
             }
 
-            clarity_tx.connection().as_transaction(|clarity| {
-                // Balances
-                if let Some(get_balances) = boot_data.get_bulk_initial_balances.take() {
-                    info!("Importing accounts from Stacks 1.0");
-                    let mut balances_count = 0;
-                    let initial_balances = get_balances();
-                    for balance in initial_balances {
-                        balances_count = balances_count + 1;
-                        let stx_address =
-                            StacksChainState::parse_genesis_address(&balance.address, mainnet);
-                        StacksChainState::account_genesis_credit(
-                            clarity,
-                            &stx_address,
-                            balance.amount.into(),
-                        );
-                        initial_liquid_ustx = initial_liquid_ustx
-                            .checked_add(balance.amount as u128)
-                            .expect("FATAL: liquid STX overflow");
-                        let mint_event = StacksTransactionEvent::STXEvent(
-                            STXEventType::STXMintEvent(STXMintEventData {
-                                recipient: stx_address,
-                                amount: balance.amount.into(),
-                            }),
-                        );
-                        allocation_events.push(mint_event);
-                    }
-                    info!("Seeding {} balances coming from chain dump", balances_count);
-                }
-
-                // Lockups
-                if let Some(get_schedules) = boot_data.get_bulk_initial_lockups.take() {
-                    info!("Initializing chain with lockups");
-                    let mut lockups_per_block: BTreeMap<u64, Vec<Value>> = BTreeMap::new();
-                    let initial_lockups = get_schedules();
-                    for schedule in initial_lockups {
-                        let stx_address =
-                            StacksChainState::parse_genesis_address(&schedule.address, mainnet);
-                        let value = Value::Tuple(
-                            TupleData::from_data(vec![
-                                ("recipient".into(), Value::Principal(stx_address)),
-                                ("amount".into(), Value::UInt(schedule.amount.into())),
-                            ])
-                            .unwrap(),
-                        );
-                        match lockups_per_block.entry(schedule.block_height) {
-                            Entry::Occupied(schedules) => {
-                                schedules.into_mut().push(value);
-                            }
-                            Entry::Vacant(entry) => {
-                                let schedules = vec![value];
-                                entry.insert(schedules);
-                            }
-                        };
+            if env::var("SKIP_1_0_IMPORT") != Ok("1".into()) {
+                clarity_tx.connection().as_transaction(|clarity| {
+                    // Balances
+                    if let Some(get_balances) = boot_data.get_bulk_initial_balances.take() {
+                        info!("Importing accounts from Stacks 1.0");
+                        let mut balances_count = 0;
+                        let initial_balances = get_balances();
+                        for balance in initial_balances {
+                            balances_count = balances_count + 1;
+                            let stx_address =
+                                StacksChainState::parse_genesis_address(&balance.address, mainnet);
+                            StacksChainState::account_genesis_credit(
+                                clarity,
+                                &stx_address,
+                                balance.amount.into(),
+                            );
+                            initial_liquid_ustx = initial_liquid_ustx
+                                .checked_add(balance.amount as u128)
+                                .expect("FATAL: liquid STX overflow");
+                            let mint_event = StacksTransactionEvent::STXEvent(
+                                STXEventType::STXMintEvent(STXMintEventData {
+                                    recipient: stx_address,
+                                    amount: balance.amount.into(),
+                                }),
+                            );
+                            allocation_events.push(mint_event);
+                        }
+                        info!("Seeding {} balances coming from chain dump", balances_count);
                     }
 
-                    let lockup_contract_id = boot_code_id("lockup", mainnet);
-                    clarity
-                        .with_clarity_db(|db| {
-                            for (block_height, schedule) in lockups_per_block.into_iter() {
-                                let key = Value::UInt(block_height.into());
-                                let value = Value::list_from(schedule).unwrap();
-                                db.insert_entry_unknown_descriptor(
-                                    &lockup_contract_id,
-                                    "lockups",
-                                    key,
-                                    value,
-                                )?;
-                            }
-                            Ok(())
-                        })
-                        .unwrap();
-                }
+                    // Lockups
+                    if let Some(get_schedules) = boot_data.get_bulk_initial_lockups.take() {
+                        info!("Initializing chain with lockups");
+                        let mut lockups_per_block: BTreeMap<u64, Vec<Value>> = BTreeMap::new();
+                        let initial_lockups = get_schedules();
+                        for schedule in initial_lockups {
+                            let stx_address =
+                                StacksChainState::parse_genesis_address(&schedule.address, mainnet);
+                            let value = Value::Tuple(
+                                TupleData::from_data(vec![
+                                    ("recipient".into(), Value::Principal(stx_address)),
+                                    ("amount".into(), Value::UInt(schedule.amount.into())),
+                                ])
+                                .unwrap(),
+                            );
+                            match lockups_per_block.entry(schedule.block_height) {
+                                Entry::Occupied(schedules) => {
+                                    schedules.into_mut().push(value);
+                                }
+                                Entry::Vacant(entry) => {
+                                    let schedules = vec![value];
+                                    entry.insert(schedules);
+                                }
+                            };
+                        }
 
-                // BNS Namespace
-                let bns_contract_id = boot_code_id("bns", mainnet);
-                if let Some(get_namespaces) = boot_data.get_bulk_initial_namespaces.take() {
-                    info!("Initializing chain with namespaces");
-                    clarity
-                        .with_clarity_db(|db| {
-                            let initial_namespaces = get_namespaces();
-                            for entry in initial_namespaces {
-                                let namespace = {
-                                    if !BNS_CHARS_REGEX.is_match(&entry.namespace_id) {
-                                        panic!("Invalid namespace characters");
-                                    }
-                                    let buffer = entry.namespace_id.as_bytes();
-                                    Value::buff_from(buffer.to_vec()).expect("Invalid namespace")
-                                };
+                        let lockup_contract_id = boot_code_id("lockup", mainnet);
+                        clarity
+                            .with_clarity_db(|db| {
+                                for (block_height, schedule) in lockups_per_block.into_iter() {
+                                    let key = Value::UInt(block_height.into());
+                                    let value = Value::list_from(schedule).unwrap();
+                                    db.insert_entry_unknown_descriptor(
+                                        &lockup_contract_id,
+                                        "lockups",
+                                        key,
+                                        value,
+                                    )?;
+                                }
+                                Ok(())
+                            })
+                            .unwrap();
+                    }
 
-                                let importer = {
-                                    let address = StacksChainState::parse_genesis_address(
-                                        &entry.importer,
-                                        mainnet,
+                    // BNS Namespace
+                    let bns_contract_id = boot_code_id("bns", mainnet);
+                    if let Some(get_namespaces) = boot_data.get_bulk_initial_namespaces.take() {
+                        info!("Initializing chain with namespaces");
+                        clarity
+                            .with_clarity_db(|db| {
+                                let initial_namespaces = get_namespaces();
+                                for entry in initial_namespaces {
+                                    let namespace = {
+                                        if !BNS_CHARS_REGEX.is_match(&entry.namespace_id) {
+                                            panic!("Invalid namespace characters");
+                                        }
+                                        let buffer = entry.namespace_id.as_bytes();
+                                        Value::buff_from(buffer.to_vec()).expect("Invalid namespace")
+                                    };
+
+                                    let importer = {
+                                        let address = StacksChainState::parse_genesis_address(
+                                            &entry.importer,
+                                            mainnet,
+                                        );
+                                        Value::Principal(address)
+                                    };
+
+                                    let revealed_at = Value::UInt(0);
+                                    let launched_at = Value::UInt(0);
+                                    let lifetime = Value::UInt(entry.lifetime.into());
+                                    let price_function = {
+                                        let base = Value::UInt(entry.base.into());
+                                        let coeff = Value::UInt(entry.coeff.into());
+                                        let nonalpha_discount =
+                                            Value::UInt(entry.nonalpha_discount.into());
+                                        let no_vowel_discount =
+                                            Value::UInt(entry.no_vowel_discount.into());
+                                        let buckets: Vec<_> = entry
+                                            .buckets
+                                            .split(";")
+                                            .map(|e| Value::UInt(e.parse::<u64>().unwrap().into()))
+                                            .collect();
+                                        assert_eq!(buckets.len(), 16);
+
+                                        TupleData::from_data(vec![
+                                            ("buckets".into(), Value::list_from(buckets).unwrap()),
+                                            ("base".into(), base),
+                                            ("coeff".into(), coeff),
+                                            ("nonalpha-discount".into(), nonalpha_discount),
+                                            ("no-vowel-discount".into(), no_vowel_discount),
+                                        ])
+                                        .unwrap()
+                                    };
+
+                                    let namespace_props = Value::Tuple(
+                                        TupleData::from_data(vec![
+                                            ("revealed-at".into(), revealed_at),
+                                            ("launched-at".into(), Value::some(launched_at).unwrap()),
+                                            ("lifetime".into(), lifetime),
+                                            ("namespace-import".into(), importer),
+                                            ("can-update-price-function".into(), Value::Bool(true)),
+                                            ("price-function".into(), Value::Tuple(price_function)),
+                                        ])
+                                        .unwrap(),
                                     );
-                                    Value::Principal(address)
-                                };
 
-                                let revealed_at = Value::UInt(0);
-                                let launched_at = Value::UInt(0);
-                                let lifetime = Value::UInt(entry.lifetime.into());
-                                let price_function = {
-                                    let base = Value::UInt(entry.base.into());
-                                    let coeff = Value::UInt(entry.coeff.into());
-                                    let nonalpha_discount =
-                                        Value::UInt(entry.nonalpha_discount.into());
-                                    let no_vowel_discount =
-                                        Value::UInt(entry.no_vowel_discount.into());
-                                    let buckets: Vec<_> = entry
-                                        .buckets
-                                        .split(";")
-                                        .map(|e| Value::UInt(e.parse::<u64>().unwrap().into()))
-                                        .collect();
-                                    assert_eq!(buckets.len(), 16);
+                                    db.insert_entry_unknown_descriptor(
+                                        &bns_contract_id,
+                                        "namespaces",
+                                        namespace,
+                                        namespace_props,
+                                    )?;
+                                }
+                                Ok(())
+                            })
+                            .unwrap();
+                    }
 
-                                    TupleData::from_data(vec![
-                                        ("buckets".into(), Value::list_from(buckets).unwrap()),
-                                        ("base".into(), base),
-                                        ("coeff".into(), coeff),
-                                        ("nonalpha-discount".into(), nonalpha_discount),
-                                        ("no-vowel-discount".into(), no_vowel_discount),
-                                    ])
-                                    .unwrap()
-                                };
+                    // BNS Names
+                    if let Some(get_names) = boot_data.get_bulk_initial_names.take() {
+                        info!("Initializing chain with names");
+                        clarity
+                            .with_clarity_db(|db| {
+                                let initial_names = get_names();
+                                for entry in initial_names {
+                                    let components: Vec<_> =
+                                        entry.fully_qualified_name.split(".").collect();
+                                    assert_eq!(components.len(), 2);
 
-                                let namespace_props = Value::Tuple(
-                                    TupleData::from_data(vec![
-                                        ("revealed-at".into(), revealed_at),
-                                        ("launched-at".into(), Value::some(launched_at).unwrap()),
-                                        ("lifetime".into(), lifetime),
-                                        ("namespace-import".into(), importer),
-                                        ("can-update-price-function".into(), Value::Bool(true)),
-                                        ("price-function".into(), Value::Tuple(price_function)),
-                                    ])
-                                    .unwrap(),
-                                );
+                                    let namespace = {
+                                        let namespace_str = components[1];
+                                        if !BNS_CHARS_REGEX.is_match(&namespace_str) {
+                                            panic!("Invalid namespace characters");
+                                        }
+                                        let buffer = namespace_str.as_bytes();
+                                        Value::buff_from(buffer.to_vec()).expect("Invalid namespace")
+                                    };
 
-                                db.insert_entry_unknown_descriptor(
-                                    &bns_contract_id,
-                                    "namespaces",
-                                    namespace,
-                                    namespace_props,
-                                )?;
-                            }
-                            Ok(())
-                        })
-                        .unwrap();
-                }
+                                    let name = {
+                                        let name_str = components[0].to_string();
+                                        if !BNS_CHARS_REGEX.is_match(&name_str) {
+                                            panic!("Invalid name characters");
+                                        }
+                                        let buffer = name_str.as_bytes();
+                                        Value::buff_from(buffer.to_vec()).expect("Invalid name")
+                                    };
 
-                // BNS Names
-                if let Some(get_names) = boot_data.get_bulk_initial_names.take() {
-                    info!("Initializing chain with names");
-                    clarity
-                        .with_clarity_db(|db| {
-                            let initial_names = get_names();
-                            for entry in initial_names {
-                                let components: Vec<_> =
-                                    entry.fully_qualified_name.split(".").collect();
-                                assert_eq!(components.len(), 2);
+                                    let fqn = Value::Tuple(
+                                        TupleData::from_data(vec![
+                                            ("namespace".into(), namespace),
+                                            ("name".into(), name),
+                                        ])
+                                        .unwrap(),
+                                    );
 
-                                let namespace = {
-                                    let namespace_str = components[1];
-                                    if !BNS_CHARS_REGEX.is_match(&namespace_str) {
-                                        panic!("Invalid namespace characters");
-                                    }
-                                    let buffer = namespace_str.as_bytes();
-                                    Value::buff_from(buffer.to_vec()).expect("Invalid namespace")
-                                };
+                                    let owner_address =
+                                        StacksChainState::parse_genesis_address(&entry.owner, mainnet);
 
-                                let name = {
-                                    let name_str = components[0].to_string();
-                                    if !BNS_CHARS_REGEX.is_match(&name_str) {
-                                        panic!("Invalid name characters");
-                                    }
-                                    let buffer = name_str.as_bytes();
-                                    Value::buff_from(buffer.to_vec()).expect("Invalid name")
-                                };
+                                    let zonefile_hash = {
+                                        if entry.zonefile_hash.len() == 0 {
+                                            Value::buff_from(vec![]).unwrap()
+                                        } else {
+                                            let buffer = Hash160::from_hex(&entry.zonefile_hash)
+                                                .expect("Invalid zonefile_hash");
+                                            Value::buff_from(buffer.to_bytes().to_vec()).unwrap()
+                                        }
+                                    };
 
-                                let fqn = Value::Tuple(
-                                    TupleData::from_data(vec![
-                                        ("namespace".into(), namespace),
-                                        ("name".into(), name),
-                                    ])
-                                    .unwrap(),
-                                );
+                                    let expected_asset_type =
+                                        db.get_nft_key_type(&bns_contract_id, "names")?;
+                                    db.set_nft_owner(
+                                        &bns_contract_id,
+                                        "names",
+                                        &fqn,
+                                        &owner_address,
+                                        &expected_asset_type,
+                                    )?;
 
-                                let owner_address =
-                                    StacksChainState::parse_genesis_address(&entry.owner, mainnet);
+                                    let registered_at = Value::UInt(0);
+                                    let name_props = Value::Tuple(
+                                        TupleData::from_data(vec![
+                                            (
+                                                "registered-at".into(),
+                                                Value::some(registered_at).unwrap(),
+                                            ),
+                                            ("imported-at".into(), Value::none()),
+                                            ("revoked-at".into(), Value::none()),
+                                            ("zonefile-hash".into(), zonefile_hash),
+                                        ])
+                                        .unwrap(),
+                                    );
 
-                                let zonefile_hash = {
-                                    if entry.zonefile_hash.len() == 0 {
-                                        Value::buff_from(vec![]).unwrap()
-                                    } else {
-                                        let buffer = Hash160::from_hex(&entry.zonefile_hash)
-                                            .expect("Invalid zonefile_hash");
-                                        Value::buff_from(buffer.to_bytes().to_vec()).unwrap()
-                                    }
-                                };
+                                    db.insert_entry_unknown_descriptor(
+                                        &bns_contract_id,
+                                        "name-properties",
+                                        fqn.clone(),
+                                        name_props,
+                                    )?;
 
-                                let expected_asset_type =
-                                    db.get_nft_key_type(&bns_contract_id, "names")?;
-                                db.set_nft_owner(
-                                    &bns_contract_id,
-                                    "names",
-                                    &fqn,
-                                    &owner_address,
-                                    &expected_asset_type,
-                                )?;
-
-                                let registered_at = Value::UInt(0);
-                                let name_props = Value::Tuple(
-                                    TupleData::from_data(vec![
-                                        (
-                                            "registered-at".into(),
-                                            Value::some(registered_at).unwrap(),
-                                        ),
-                                        ("imported-at".into(), Value::none()),
-                                        ("revoked-at".into(), Value::none()),
-                                        ("zonefile-hash".into(), zonefile_hash),
-                                    ])
-                                    .unwrap(),
-                                );
-
-                                db.insert_entry_unknown_descriptor(
-                                    &bns_contract_id,
-                                    "name-properties",
-                                    fqn.clone(),
-                                    name_props,
-                                )?;
-
-                                db.insert_entry_unknown_descriptor(
-                                    &bns_contract_id,
-                                    "owner-name",
-                                    Value::Principal(owner_address),
-                                    fqn,
-                                )?;
-                            }
-                            Ok(())
-                        })
-                        .unwrap();
-                }
-                info!("Saving Genesis block. This could take a while");
-            });
+                                    db.insert_entry_unknown_descriptor(
+                                        &bns_contract_id,
+                                        "owner-name",
+                                        Value::Principal(owner_address),
+                                        fqn,
+                                    )?;
+                                }
+                                Ok(())
+                            })
+                            .unwrap();
+                    }
+                    info!("Saving Genesis block. This could take a while");
+                });
+            }
 
             let allocations_tx = StacksTransaction::new(
                 tx_version.clone(),

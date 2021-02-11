@@ -78,6 +78,7 @@ pub struct RegistrationKey {
     pub op_vtxindex: u32,
     pub vrf_public_key: VRFPublicKey,
     pub vrf_secret_key: VRFPrivateKey,
+    pub txid: Sha256dHash,
 }
 
 #[derive(Clone, Debug)]
@@ -248,16 +249,6 @@ fn rotate_vrf_and_register(
     let vrf_public_key = keychain.rotate_vrf_keypair(burn_block.block_height);
 
     let vrf_pk = vrf_public_key.clone();
-    let registered_key = RegistrationKey {
-        block_height: burn_block.block_height + 1,
-        op_vtxindex: 0,
-        vrf_public_key: vrf_pk.clone(),
-        vrf_secret_key: keychain.get_sk(&vrf_pk).unwrap().clone(),
-    };
-    let registered_key_json = serde_json::to_string(&registered_key).unwrap();
-    info!("writing vrf_key_prov.json: {:?}, add the transaction index and rename to vrf_key.json to activate", registered_key_json);
-    // TODO(psq): the op_vtxindex will need to be manually adjusted once the tx has confirmed
-    fs::write("vrf_key_prov.json", registered_key_json).expect("Unable to write key file file");
 
     let burnchain_tip_consensus_hash = &burn_block.consensus_hash;
     let op = inner_generate_leader_key_register_op(
@@ -269,7 +260,20 @@ fn rotate_vrf_and_register(
     let mut one_off_signer = keychain.generate_op_signer();
     let txid_opt = btc_controller.submit_operation(op, &mut one_off_signer, 1);
     if txid_opt.is_some() {
-        return Some((txid_opt.unwrap(), vrf_public_key));      
+        let txid = txid_opt.unwrap();
+        let registered_key = RegistrationKey {
+            block_height: burn_block.block_height + 1,
+            op_vtxindex: 0,
+            vrf_public_key: vrf_pk.clone(),
+            vrf_secret_key: keychain.get_sk(&vrf_pk).unwrap().clone(),
+            txid,
+        };
+        let registered_key_json = serde_json::to_string(&registered_key).unwrap();
+        info!("writing vrf_key_prov.json: {:?}, add the transaction index and rename to vrf_key.json to activate", registered_key_json);
+        // TODO(psq): the op_vtxindex will need to be manually adjusted once the tx has confirmed, or could be retrieved using the txid
+        fs::write("vrf_key_prov.json", registered_key_json).expect("Unable to write key file file");
+
+        return Some((txid, vrf_public_key));      
     }
     None
 }

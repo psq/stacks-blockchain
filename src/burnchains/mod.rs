@@ -152,11 +152,11 @@ impl BurnchainParameters {
             network_id: BITCOIN_NETWORK_ID_REGTEST,
             stable_confirmations: 1,
             consensus_hash_lifetime: 24,
-            first_block_height: BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT,
+            first_block_height: *BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT,
             first_block_hash: BurnchainHeaderHash::from_hex(BITCOIN_REGTEST_FIRST_BLOCK_HASH)
                 .unwrap(),
             first_block_timestamp: BITCOIN_REGTEST_FIRST_BLOCK_TIMESTAMP,
-            initial_reward_start_block: BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT,
+            initial_reward_start_block: *BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT,
         }
     }
 
@@ -409,8 +409,8 @@ impl PoxConstants {
             1,
             3333333333333333,
             1,
-            BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT + POX_SUNSET_START,
-            BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT + POX_SUNSET_END,
+            *BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT + POX_SUNSET_START,
+            *BITCOIN_REGTEST_FIRST_BLOCK_HEIGHT + POX_SUNSET_END,
         )
     }
 }
