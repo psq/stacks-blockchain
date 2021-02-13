@@ -1085,6 +1085,10 @@ pub struct BuildBlockTemplateResponse {
     pub block_hash: BlockHeaderHash,
     #[serde(rename = "new-seed")]
     pub new_seed: VRFSeed,
+    #[serde(rename = "parent-block-burn-height")]
+    pub parent_block_burn_height: u64,
+    #[serde(rename = "parent-block-burn-txoff")]
+    pub parent_block_burn_txoff: u16,
     pub recipients: Vec<StacksAddress>,
 }
 
@@ -1230,10 +1234,6 @@ pub struct PostBuildBlockTemplateRequestBody {
     pub anchored_block_hash: BlockHeaderHash,
     #[serde(rename = "parent-consensus-hash")]
     pub parent_consensus_hash: ConsensusHash,
-    #[serde(rename = "parent-block-burn_height")]
-    pub parent_block_burn_height: u64,
-    #[serde(rename = "parent-winning-vtxindex")]
-    pub parent_winning_vtxindex: u16,
     #[serde(rename = "target-burn-block-height")]
     pub target_burn_block_height: u64,
     #[serde(rename = "txids")]
@@ -1335,8 +1335,6 @@ pub enum HttpRequestType {
         VRFPublicKey,
         BlockHeaderHash,
         ConsensusHash,
-        u64,
-        u16,
         u64,
         Option<Vec<Txid>>,
     ),

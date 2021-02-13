@@ -140,8 +140,6 @@ pub enum RPCDirective {
         BlockHeaderHash,
         ConsensusHash,
         u64,
-        u16,
-        u64,
         Option<Vec<Txid>>,
         SyncSender<BuildBlockTemplateRPCResponse>,
     ),
@@ -1666,8 +1664,6 @@ impl ConversationHttp {
         vrf_pk: &VRFPublicKey,
         anchored_block_hash: &BlockHeaderHash,
         parent_consensus_hash: &ConsensusHash,
-        parent_block_burn_height: &u64,
-        parent_winning_vtxindex: &u16,
         target_burn_block: &u64,
         txids: &Option<Vec<Txid>>,
         rpc_channel: Option<SyncSender<RPCDirective>>,
@@ -1675,7 +1671,7 @@ impl ConversationHttp {
         let response_metadata = HttpResponseMetadata::from(req);
 
         // TODO(psq): generate block
-        println!("handle_post_build_block {:?} {:?}/{:?} ({:?}, {:?}) {:?}", vrf_pk, anchored_block_hash, parent_consensus_hash, parent_block_burn_height, parent_winning_vtxindex, target_burn_block);
+        println!("handle_post_build_block {:?} {:?}/{:?} {:?}", vrf_pk, anchored_block_hash, parent_consensus_hash, target_burn_block);
 
         // TODO(psq): why do I have to go through this nonsense to avoid "borrowing"?  dumb compiler, or dumb dev?
         let txids: Option<Vec<Txid>> = if txids.is_some() {
@@ -1689,8 +1685,6 @@ impl ConversationHttp {
             *vrf_pk,
             *anchored_block_hash,
             *parent_consensus_hash,
-            *parent_block_burn_height,
-            *parent_winning_vtxindex,
             *target_burn_block,
             txids,
             tx,
@@ -2099,35 +2093,20 @@ impl ConversationHttp {
                 )?;
                 None
             }
-            HttpRequestType::PostBuildBlockTemplate(ref _md, ref vrf_pk, ref anchored_block_hash, ref parent_consensus_hash, ref parent_block_burn_height, ref parent_winning_vtxindex, ref target_burn_block, ref txids) => {
-                debug!("==> PostBuildBlockTemplate {:#?} - {:#?}:{:#?} - {:#?},{:#?} - {:#?} [{:#?}]", vrf_pk, anchored_block_hash, parent_consensus_hash, parent_block_burn_height, parent_winning_vtxindex, target_burn_block, txids);
+            HttpRequestType::PostBuildBlockTemplate(ref _md, ref vrf_pk, ref anchored_block_hash, ref parent_consensus_hash, ref target_burn_block, ref txids) => {
+                debug!("==> PostBuildBlockTemplate {:#?} - {:#?}:{:#?} - {:#?} [{:#?}]", vrf_pk, anchored_block_hash, parent_consensus_hash, target_burn_block, txids);
 
-                match chainstate.get_stacks_chain_tip(sortdb)? {
-                    Some(_tip) => {
-                        ConversationHttp::handle_post_build_block(
-                            &mut self.connection.protocol,
-                            &mut reply,
-                            &req,
-                            vrf_pk,
-                            anchored_block_hash,
-                            parent_consensus_hash,
-                            parent_block_burn_height,
-                            parent_winning_vtxindex,
-                            target_burn_block,
-                            txids,
-                            self.rpc_channel.clone(),
-                        )?;
-                    }
-                    None => {
-                        let response_metadata = HttpResponseMetadata::from(&req);
-                        warn!("Failed to load Stacks chain tip");
-                        let response = HttpResponseType::ServerError(
-                            response_metadata,
-                            format!("Failed to load Stacks chain tip"),
-                        );
-                        response.send(&mut self.connection.protocol, &mut reply)?;
-                    }
-                }
+                ConversationHttp::handle_post_build_block(
+                    &mut self.connection.protocol,
+                    &mut reply,
+                    &req,
+                    vrf_pk,
+                    anchored_block_hash,
+                    parent_consensus_hash,
+                    target_burn_block,
+                    txids,
+                    self.rpc_channel.clone(),
+                )?;
                 None
             }
             HttpRequestType::OptionsPreflight(ref _md, ref _path) => {

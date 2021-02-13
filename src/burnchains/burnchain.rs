@@ -714,6 +714,8 @@ impl Burnchain {
         burn_tx: &BurnchainTransaction,
         pre_stx_op_map: &HashMap<Txid, PreStxOp>,
     ) -> Option<BlockstackOperationType> {
+
+        println!("==== classify_transaction {:?} {:?}", burn_tx.opcode(), burn_tx);
         match burn_tx.opcode() {
             x if x == Opcodes::LeaderKeyRegister as u8 => {
                 match LeaderKeyRegisterOp::from_tx(block_header, burn_tx) {

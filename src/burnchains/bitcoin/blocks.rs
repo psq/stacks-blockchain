@@ -263,13 +263,16 @@ impl BitcoinBlockParser {
 
     /// Parse the data output to get a byte payload
     fn parse_data(&self, data_output: &Script) -> Option<(u8, Vec<u8>)> {
+        debug!("parse_data {:?} {:?} {:?}", self.network_id, self.magic_bytes, data_output);
         if !data_output.is_op_return() {
             test_debug!("Data output is not an OP_RETURN");
+            debug!("Data output is not an OP_RETURN");
             return None;
         }
 
         if data_output.len() <= self.magic_bytes.len() {
             test_debug!("Data output is too short to carry an operation");
+            debug!("Data output is too short to carry an operation");
             return None;
         }
 
@@ -277,6 +280,7 @@ impl BitcoinBlockParser {
         if script_pieces.len() != 2 {
             // not OP_RETURN <data>
             test_debug!("Data output does not encode a valid OP_RETURN");
+            debug!("Data output does not encode a valid OP_RETURN");
             return None;
         }
 
@@ -284,10 +288,12 @@ impl BitcoinBlockParser {
             (Instruction::Op(ref opcode), Instruction::PushBytes(ref data)) => {
                 if *opcode != btc_opcodes::OP_RETURN {
                     test_debug!("Data output does not use a standard OP_RETURN");
+                    debug!("Data output does not use a standard OP_RETURN");
                     return None;
                 }
                 if !data.starts_with(self.magic_bytes.as_bytes()) {
                     test_debug!("Data output does not start with magic bytes");
+                    debug!("Data output does not start with magic bytes");
                     return None;
                 }
 
@@ -296,6 +302,7 @@ impl BitcoinBlockParser {
             }
             (_, _) => {
                 test_debug!("Data output is not OP_RETURN <data>");
+                debug!("Data output is not OP_RETURN <data>");
                 None
             }
         }

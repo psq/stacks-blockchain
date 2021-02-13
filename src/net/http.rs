@@ -137,6 +137,7 @@ lazy_static! {
     static ref PATH_GET_ATTACHMENTS_INV: Regex = Regex::new("^/v2/attachments/inv$").unwrap();
     static ref PATH_GET_ATTACHMENT: Regex =
         Regex::new(r#"^/v2/attachments/([0-9a-f]{40})$"#).unwrap();
+    static ref PATH_POST_REGISTER_KEY: Regex = Regex::new(r#"^/v2/miner/register-key$"#).unwrap();
     static ref PATH_POST_BUILD_BLOCK: Regex = Regex::new(r#"^/v2/miner/build-block$"#).unwrap();
     static ref PATH_OPTIONS_WILDCARD: Regex = Regex::new("^/v2/.{0,4096}$").unwrap();
 }
@@ -1507,6 +1508,11 @@ impl HttpRequestType {
             ),
             (
                 "POST",
+                &PATH_POST_REGISTER_KEY,
+                &HttpRequestType::parse_post_register_key,
+            ),
+            (
+                "POST",
                 &PATH_POST_BUILD_BLOCK,
                 &HttpRequestType::parse_post_build_block,
             ),
@@ -1874,8 +1880,6 @@ impl HttpRequestType {
         let vrf_pk = body.vrf_pk;
         let anchored_block_hash = body.anchored_block_hash;
         let parent_consensus_hash = body.parent_consensus_hash;
-        let parent_block_burn_height = body.parent_block_burn_height;
-        let parent_winning_vtxindex = body.parent_winning_vtxindex;
         let target_burn_block_height = body.target_burn_block_height;
         let txids = body.txids;
 
@@ -1884,8 +1888,6 @@ impl HttpRequestType {
             vrf_pk,
             anchored_block_hash,
             parent_consensus_hash,
-            parent_block_burn_height,
-            parent_winning_vtxindex,
             target_burn_block_height,
             txids,
         ))

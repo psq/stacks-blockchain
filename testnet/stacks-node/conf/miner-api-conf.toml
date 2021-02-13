@@ -1,0 +1,43 @@
+[node]
+rpc_bind = "0.0.0.0:20843"
+p2p_bind = "0.0.0.0:20844"
+
+miner = false
+seed = "..."
+wait_time_for_microblocks = 0
+
+# wait_time_for_microblocks = 15000
+
+[burnchain]
+# chain = "bitcoin"
+chain = "bitcoin"
+# to work with regtest, use krypton
+mode = "krypton"
+peer_host = "127.0.0.1"
+peer_port = 18444
+rpc_port = 18443
+rpc_ssl = false
+username = "helium-node"
+password = "secret"
+timeout = 30
+
+[connection_options]
+# public_ip_address = "127.0.0.1:20844"
+download_interval = 5
+walk_interval = 5
+
+[[ustx_balance]]
+address = "STB44HYPYAT2BB2QE513NSP81HTMYWBJP02HPGK6"
+amount = 10000000000000000
+
+[[ustx_balance]]
+address = "ST11NJTTKGVT6D1HY4NJRVQWMQM7TVAR091EJ8P2Y"
+amount = 10000000000000000
+
+[[ustx_balance]]
+address = "ST1HB1T8WRNBYB0Y3T7WXZS38NKKPTBR3EG9EPJKR"
+amount = 10000000000000000
+
+[[ustx_balance]]
+address = "STRYYQQ9M8KAF4NS7WNZQYY59X93XEKR31JP64CP"
+amount = 10000000000000000

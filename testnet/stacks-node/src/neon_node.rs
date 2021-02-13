@@ -816,6 +816,7 @@ fn spawn_miner_relayer(
                             if let Some(last_mined_blocks_at_burn_hash) =
                                 last_mined_blocks.remove(&burn_hash)
                             {
+                                println!("checking {:?}", last_mined_blocks_at_burn_hash);
                                 for (last_mined_block, microblock_privkey) in
                                     last_mined_blocks_at_burn_hash.into_iter()
                                 {
@@ -914,6 +915,8 @@ fn spawn_miner_relayer(
                                         miner_tip = None;
                                     }
                                 }
+                            } else {
+                                println!("nothing to check");
                             }
                         }
                         RelayerDirective::RunTenure(registered_key, last_burn_block) => {
@@ -1039,13 +1042,11 @@ fn spawn_miner_relayer(
                             vrf_pk,
                             anchored_block_hash,
                             parent_consensus_hash,
-                            parent_block_burn_height,
-                            parent_winning_vtxindex,
                             target_burn_block,
                             txids,
                             tx,
                         ) => {
-                            info!("Relayer: PrepareBlock {:?} / {:?} previous winner {:?}-{:?}, target {:?}", anchored_block_hash, parent_consensus_hash, parent_block_burn_height, parent_winning_vtxindex, target_burn_block);
+                            info!("Relayer: PrepareBlock {:?} / {:?} target {:?}", anchored_block_hash, parent_consensus_hash, target_burn_block);
 
                             match InitializedNeonNode::relayer_prepare_block(
                                 &mut chainstate,
@@ -1057,12 +1058,10 @@ fn spawn_miner_relayer(
                                 vrf_pk,
                                 anchored_block_hash,
                                 parent_consensus_hash,
-                                parent_block_burn_height,
-                                parent_winning_vtxindex,
                                 target_burn_block,
                                 txids,
                             ) {
-                                Ok((last_mined_block, seed, recipients, microblock_privkey)) => {
+                                Ok((last_mined_block, seed, parent_block_burn_height, parent_block_burn_txoff, recipients, microblock_privkey)) => {
                                     let mut last_mined_blocks_vec = last_mined_blocks
                                         .remove(&last_mined_block.my_burn_hash)
                                         .unwrap_or_default();
@@ -1076,11 +1075,14 @@ fn spawn_miner_relayer(
                                     let block_hash = last_mined_block.anchored_block.block_hash();
                                     last_mined_blocks_vec.push((last_mined_block, microblock_privkey));
                                     last_mined_blocks.insert(my_burn_hash, last_mined_blocks_vec);
+                                    debug!("storing block my_burn_hash: {:?} block_hash {:?} microblock_privkey {:?}", my_burn_hash, block_hash, microblock_privkey);
 
                                     // TODO(psq): create option (either response, or error)
                                     let response = BuildBlockTemplateResponse {
                                         block_hash: block_hash,
                                         new_seed: seed,
+                                        parent_block_burn_height,
+                                        parent_block_burn_txoff,
                                         recipients,
                                     };
                                     if let Err(err) = tx.send(BuildBlockTemplateRPCResponseOk { response }) {
@@ -1379,10 +1381,13 @@ impl InitializedNeonNode {
     ///  and advertize it if it was mined by the node.
     /// returns _false_ if the relayer hung up the channel.
     pub fn relayer_sortition_notify(&self) -> bool {
-        if !self.is_miner {
-            // node is a follower, don't try to process my own tenure.
-            return true;
-        }
+        // TODO(psq): need to also allow for node being used for mining via RPC
+        // just removing this test should be ok anyway as it won't do anything
+        // if no block was pre-mined already
+        // if !self.is_miner {
+        //     // node is a follower, don't try to process my own tenure.
+        //     return true;
+        // }
 
         if let Some(ref snapshot) = &self.last_burn_block {
             debug!(
@@ -1417,15 +1422,9 @@ impl InitializedNeonNode {
         vrf_pk: VRFPublicKey,
         anchored_block_hash: BlockHeaderHash,
         parent_consensus_hash: ConsensusHash,
-
-        // TODO(psq): oops, not needed, remove from api
-        // could we use instead of not have the node already processed that (not with consensus that requrires going deep?)
-        _parent_block_burn_height: u64,
-        _parent_winning_vtxindex: u16,
-
         target_burn_block: u64,      
         txids: Option<Vec<Txid>>,  // TODO(psq): not used yet, uses the default mempool behavior
-    ) -> Result<(AssembledAnchorBlock, VRFSeed, Vec<StacksAddress>, Secp256k1PrivateKey), ChainstateError> {
+    ) -> Result<(AssembledAnchorBlock, VRFSeed, u64, u16, Vec<StacksAddress>, Secp256k1PrivateKey), ChainstateError> {
 
         let mainnet = chainstate.config().mainnet;
         let chain_id = chainstate.config().chain_id;
@@ -1438,10 +1437,11 @@ impl InitializedNeonNode {
 
         // TODO(psq): is this really necessary, just as a sanity check?
         if let Some(parent_snapshot) = SortitionDB::get_block_snapshot_consensus(burn_db.conn(), &parent_consensus_hash).unwrap() {
-            let (tip_consensus_hash, tip_block_hash, tip_height) = (
+            let (tip_consensus_hash, tip_block_hash, tip_height, tip_burn_hash) = (
                 parent_snapshot.consensus_hash.clone(),
                 parent_snapshot.winning_stacks_block_hash.clone(),
                 parent_snapshot.block_height,
+                parent_snapshot.burn_header_hash,
             );
 
             if tip_block_hash != anchored_block_hash {
@@ -1449,11 +1449,18 @@ impl InitializedNeonNode {
                 return Err(ChainstateError::NoSuchBlockError);
             }
 
+            let burn_tip_snapshot_opt = SortitionDB::get_canonical_burn_chain_tip(burn_db.conn());
+            if burn_tip_snapshot_opt.is_err() {
+                return Err(ChainstateError::InvalidChainstateDB);
+            }
+            let burn_tip_snapshot = burn_tip_snapshot_opt.unwrap();
+
             debug!(
-                "Build anchored block off of {}/{} height {}",
-                &tip_consensus_hash, &tip_block_hash, tip_height
+                "Build anchored block off of {}/{} height {} - parent_burn_hash {} / burn_tip_hash {}",
+                &tip_consensus_hash, &tip_block_hash, tip_height, tip_burn_hash, burn_tip_snapshot.burn_header_hash
             );
 
+            // TODO(psq): if anchored_block_hash is 0000000000000000000000000000000000000000000000000000000000000000, we need to build a genesis block instead
 
             let stacks_tip_header_opt = StacksChainState::get_anchored_block_header_info(
                 chainstate.db(),
@@ -1468,34 +1475,40 @@ impl InitializedNeonNode {
 
             let mut stacks_tip_header = stacks_tip_header_opt.unwrap();
 
+            println!("is genesis? {:?}", parent_consensus_hash == ConsensusHash::empty());
+
             let parent_sortition_id = &parent_snapshot.sortition_id;
-            // let parent_winning_vtxindex =
-            //     match SortitionDB::get_block_winning_vtxindex(burn_db.conn(), parent_sortition_id)
+            let (parent_winning_height, parent_winning_vtxindex) = if parent_consensus_hash != ConsensusHash::empty() {
+                match SortitionDB::get_block_winning_vtxindex(burn_db.conn(), parent_sortition_id)
+                    .expect("SortitionDB failure.")
+                {
+                    Some(x) => (parent_snapshot.block_height, x),
+                    None => {
+                        warn!(
+                            "Failed to find winning vtx index for the parent sortition {}",
+                            parent_sortition_id
+                        );
+                        return Err(ChainstateError::NoSuchBlockError);
+                    }
+                }
+            } else {
+                (0, 0 as u16)  // genesis
+            };
+
+            // TODO(psq): is this really different from parent_snapshot
+            // let parent_block_snapshot =
+            //     match SortitionDB::get_block_snapshot(burn_db.conn(), parent_sortition_id)
             //         .expect("SortitionDB failure.")
             //     {
             //         Some(x) => x,
             //         None => {
             //             warn!(
-            //                 "Failed to find winning vtx index for the parent sortition {}",
+            //                 "Failed to find block snapshot for the parent sortition {}",
             //                 parent_sortition_id
             //             );
             //             return Err(ChainstateError::NoSuchBlockError);
             //         }
             //     };
-
-            let parent_block_snapshot =
-                match SortitionDB::get_block_snapshot(burn_db.conn(), parent_sortition_id)
-                    .expect("SortitionDB failure.")
-                {
-                    Some(x) => x,
-                    None => {
-                        warn!(
-                            "Failed to find block snapshot for the parent sortition {}",
-                            parent_sortition_id
-                        );
-                        return Err(ChainstateError::NoSuchBlockError);
-                    }
-                };
 
             // // don't mine off of an old burnchain block
             // let burn_chain_tip = SortitionDB::get_canonical_burn_chain_tip(burn_db.conn())
@@ -1580,7 +1593,7 @@ impl InitializedNeonNode {
             // Generates a proof out of the sortition hash provided in the params.
             let vrf_proof = match keychain.generate_proof(
                 &vrf_pk,
-                parent_snapshot.sortition_hash.as_bytes(),
+                burn_tip_snapshot.sortition_hash.as_bytes(),
             ) {
                 Some(vrfp) => vrfp,
                 None => {
@@ -1681,7 +1694,8 @@ impl InitializedNeonNode {
                 &burn_db.index_conn(),
                 mempool,
                 &stacks_tip_header,
-                parent_block_snapshot.total_burn,
+                // parent_block_snapshot.total_burn,
+                parent_snapshot.total_burn,
                 vrf_proof.clone(),
                 mblock_pubkey_hash,
                 &coinbase_tx,
@@ -1697,7 +1711,8 @@ impl InitializedNeonNode {
             let block_height = anchored_block.header.total_work.work;
             info!(
                 "Succeeded assembling {} block #{}: {}, with {} txs",
-                if parent_block_snapshot.total_burn == 0 {
+                // if parent_block_snapshot.total_burn == 0 {
+                if parent_snapshot.total_burn == 0 {
                     "Genesis"
                 } else {
                     "Stacks"
@@ -1753,17 +1768,18 @@ impl InitializedNeonNode {
             // key_block_height,
             // key_tx_offset,
 
-
             let assembled_block = AssembledAnchorBlock {
                 parent_consensus_hash: parent_consensus_hash,
-                my_burn_hash: parent_snapshot.burn_header_hash,
+                my_burn_hash: burn_tip_snapshot.burn_header_hash,  // TODO(psq): this should be the highest burn hash, not parent hash
                 anchored_block,
                 attempt: 0,
             };
 
             Ok((
                 assembled_block,
-                VRFSeed::from_proof(&vrf_proof), // VRFSeed::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+                VRFSeed::from_proof(&vrf_proof),
+                parent_winning_height,
+                parent_winning_vtxindex,
                 commit_outs,
                 microblock_secret_key,
             ))
@@ -2352,20 +2368,8 @@ impl NeonGenesisNode {
         }
     }
 
-    pub fn into_initialized_leader_node(
-        self,
-        burnchain_tip: BurnchainTip,
-        blocks_processed: BlocksProcessedCounter,
-        coord_comms: CoordinatorChannels,
-        sync_comms: PoxSyncWatchdogComms,
-        attachments_rx: Receiver<HashSet<AttachmentInstance>>,
-        atlas_config: AtlasConfig,
-    ) -> InitializedNeonNode {
-        let config = self.config;
-        let mut keychain = self.keychain;
-        let event_dispatcher = self.event_dispatcher;
-
-        let leader_key_registration_state = match fs::read_to_string("vrf_key.json") {
+    fn get_init_key_registration_state(keychain: &mut Keychain) -> LeaderKeyRegistrationState {
+        match fs::read_to_string("vrf_key.json") {
             Ok(json) => {
                 // let json = fs::read_to_string(vrf_key_file).expect("Unable to read file");
                 let registration_key: RegistrationKey = serde_json::from_str(&json).unwrap();
@@ -2382,7 +2386,41 @@ impl NeonGenesisNode {
                 info!("vrf_key.json not found, will register a new key");
                 LeaderKeyRegistrationState::Inactive
             },
-        };
+        }
+    }
+
+    pub fn into_initialized_leader_node(
+        self,
+        burnchain_tip: BurnchainTip,
+        blocks_processed: BlocksProcessedCounter,
+        coord_comms: CoordinatorChannels,
+        sync_comms: PoxSyncWatchdogComms,
+        attachments_rx: Receiver<HashSet<AttachmentInstance>>,
+        atlas_config: AtlasConfig,
+    ) -> InitializedNeonNode {
+        let config = self.config;
+        let mut keychain = self.keychain;
+        let event_dispatcher = self.event_dispatcher;
+        let leader_key_registration_state = NeonGenesisNode::get_init_key_registration_state(&mut keychain);
+
+        // let leader_key_registration_state = match fs::read_to_string("vrf_key.json") {
+        //     Ok(json) => {
+        //         // let json = fs::read_to_string(vrf_key_file).expect("Unable to read file");
+        //         let registration_key: RegistrationKey = serde_json::from_str(&json).unwrap();
+        //         info!("reusing registration_key {:?}", registration_key);
+        //         keychain.add(&registration_key.vrf_public_key, &registration_key.vrf_secret_key);
+
+        //         LeaderKeyRegistrationState::Active(RegisteredKey {
+        //             vrf_public_key: registration_key.vrf_public_key,
+        //             block_height: registration_key.block_height,
+        //             op_vtxindex: registration_key.op_vtxindex,
+        //         })
+        //     },
+        //     _ => {
+        //         info!("vrf_key.json not found, will register a new key");
+        //         LeaderKeyRegistrationState::Inactive
+        //     },
+        // };
 
         InitializedNeonNode::new(
             config,
@@ -2410,8 +2448,9 @@ impl NeonGenesisNode {
         atlas_config: AtlasConfig,
     ) -> InitializedNeonNode {
         let config = self.config;
-        let keychain = self.keychain;
+        let mut keychain = self.keychain;
         let event_dispatcher = self.event_dispatcher;
+        let leader_key_registration_state = NeonGenesisNode::get_init_key_registration_state(&mut keychain);
 
         InitializedNeonNode::new(
             config,
@@ -2425,7 +2464,7 @@ impl NeonGenesisNode {
             self.burnchain,
             attachments_rx,
             atlas_config,
-            LeaderKeyRegistrationState::Inactive,
+            leader_key_registration_state,
         )
     }
 }
