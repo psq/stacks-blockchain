@@ -1671,7 +1671,7 @@ impl ConversationHttp {
         let response_metadata = HttpResponseMetadata::from(req);
 
         // TODO(psq): generate block
-        println!("handle_post_build_block {:?} {:?}/{:?} {:?}", vrf_pk, anchored_block_hash, parent_consensus_hash, target_burn_block);
+        println!("handle_post_build_block {:?} {:?} / {:?} {:?}", vrf_pk, anchored_block_hash, parent_consensus_hash, target_burn_block);
 
         // TODO(psq): why do I have to go through this nonsense to avoid "borrowing"?  dumb compiler, or dumb dev?
         let txids: Option<Vec<Txid>> = if txids.is_some() {
@@ -2094,7 +2094,7 @@ impl ConversationHttp {
                 None
             }
             HttpRequestType::PostBuildBlockTemplate(ref _md, ref vrf_pk, ref anchored_block_hash, ref parent_consensus_hash, ref target_burn_block, ref txids) => {
-                debug!("==> PostBuildBlockTemplate {:#?} - {:#?}:{:#?} - {:#?} [{:#?}]", vrf_pk, anchored_block_hash, parent_consensus_hash, target_burn_block, txids);
+                debug!("==> PostBuildBlockTemplate {:#?} - {:#?} / {:#?} - {:#?} [{:#?}]", vrf_pk, anchored_block_hash, parent_consensus_hash, target_burn_block, txids);
 
                 ConversationHttp::handle_post_build_block(
                     &mut self.connection.protocol,
