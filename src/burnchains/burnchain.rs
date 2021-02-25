@@ -1370,11 +1370,11 @@ impl Burnchain {
 
                         if is_mainnet {
                             if last_processed.block_height == STACKS_2_0_LAST_BLOCK_TO_PROCESS {
-                                info!("Reached Stacks 2.0 last block to processed, ignoring subsequent burn blocks";
+                                info!("Reached Stacks 2.0 last block to process, ignoring subsequent burn blocks";
                                       "block_height" => last_processed.block_height);
                                 continue;
                             } else if last_processed.block_height > STACKS_2_0_LAST_BLOCK_TO_PROCESS {
-                                debug!("Reached Stacks 2.0 last block to processed, ignoring subsequent burn blocks";
+                                debug!("Reached Stacks 2.0 last block to process, ignoring subsequent burn blocks";
                                        "last_block" => STACKS_2_0_LAST_BLOCK_TO_PROCESS,
                                        "block_height" => last_processed.block_height);
                                 continue;
